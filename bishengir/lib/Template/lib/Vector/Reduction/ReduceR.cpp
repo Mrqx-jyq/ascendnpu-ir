@@ -303,14 +303,71 @@ reduce_r_vcg_core(memref_t<__ubuf__ T, 1> *src0, memref_t<__ubuf__ T, 1> *dst,
   }
 }
 
+// Implementation for SUM with half/float using dichotomy to num_per_repeat then pairwise reduction
 template <ReduceOpTy OP, typename T>
-__aiv__ __attribute__((always_inline)) void
-reduce_r_core_on_scalar(memref_t<__ubuf__ T, 1> *src0,
-                        memref_t<__ubuf__ T, 1> *dst,
-                        int64_t scalar_element_num, bool need_merge) {
-#ifdef ENABLE_CPU_TRACE_INTRINSIC
-  WARN_SCALAR_IMPL("reduceR");
-#endif
+__aiv__ __attribute__((always_inline))
+std::enable_if_t<(OP == ReduceOpTy::REDUCE_SUM && 
+                  (std::is_same<half, T>() || std::is_same<float, T>())), void>
+reduce_r_core_on_scalar_impl(memref_t<__ubuf__ T, 1> *src0,
+                             memref_t<__ubuf__ T, 1> *dst,
+                             int64_t scalar_element_num, bool need_merge,
+                             memref_t<__ubuf__ T, 1> *tmp_buf) {
+  __ubuf__ T *src_ptr = src0->aligned + src0->offset;
+  __ubuf__ T *dst_value_ptr = dst->aligned + dst->offset;
+  __ubuf__ T *tmp_buf_ptr = tmp_buf->aligned + tmp_buf->offset;
+
+  INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+
+  // First reduce by dichotomy to length num_per_repeat, then apply pairwise reduction.
+  T result = scalar_reduce_to_num_per_repeat_pairwise<OP, T>(
+      src_ptr, src0->strides[0], scalar_element_num, tmp_buf_ptr);
+
+  if (need_merge) {
+    *dst_value_ptr = reduction_scalar_operation<OP, T>(*dst_value_ptr, result);
+  } else {
+    *dst_value_ptr = result;
+  }
+  INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+}
+
+// Implementation for PROD (all types) or SUM with non-float types using full dichotomy
+template <ReduceOpTy OP, typename T>
+__aiv__ __attribute__((always_inline))
+std::enable_if_t<(OP == ReduceOpTy::REDUCE_PROD || 
+                  (OP == ReduceOpTy::REDUCE_SUM && 
+                   !(std::is_same<half, T>() || std::is_same<float, T>()))), void>
+reduce_r_core_on_scalar_impl(memref_t<__ubuf__ T, 1> *src0,
+                             memref_t<__ubuf__ T, 1> *dst,
+                             int64_t scalar_element_num, bool need_merge,
+                             memref_t<__ubuf__ T, 1> *tmp_buf) {
+  __ubuf__ T *src_ptr = src0->aligned + src0->offset;
+  __ubuf__ T *dst_value_ptr = dst->aligned + dst->offset;
+  __ubuf__ T *tmp_buf_ptr = tmp_buf->aligned + tmp_buf->offset;
+
+  INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  // Use full dichotomy for PROD (all types) and SUM (non-float types)
+  T result = scalar_reduce_dichotomy<OP, T>(src_ptr, src0->strides[0], scalar_element_num, tmp_buf_ptr);
+
+  if (need_merge) {
+    *dst_value_ptr = reduction_scalar_operation<OP, T>(*dst_value_ptr, result);
+  } else {
+    *dst_value_ptr = result;
+  }
+  INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+}
+
+// Implementation for other ops using naive sequential reduction
+template <ReduceOpTy OP, typename T>
+__aiv__ __attribute__((always_inline))
+std::enable_if_t<!(OP == ReduceOpTy::REDUCE_SUM || OP == ReduceOpTy::REDUCE_PROD), void>
+reduce_r_core_on_scalar_impl(memref_t<__ubuf__ T, 1> *src0,
+                             memref_t<__ubuf__ T, 1> *dst,
+                             int64_t scalar_element_num, bool need_merge,
+                             memref_t<__ubuf__ T, 1> * /*tmp_buf*/) {
   __ubuf__ T *src_ptr = src0->aligned + src0->offset;
   __ubuf__ T *dst_value_ptr = dst->aligned + dst->offset;
 
@@ -328,9 +385,21 @@ reduce_r_core_on_scalar(memref_t<__ubuf__ T, 1> *src0,
       *dst_value_ptr = reduction_scalar_operation<OP, T>(*dst_value_ptr, val);
     }
   }
-
   INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+}
+
+template <ReduceOpTy OP, typename T>
+__aiv__ __attribute__((always_inline)) void
+reduce_r_core_on_scalar(memref_t<__ubuf__ T, 1> *src0,
+                        memref_t<__ubuf__ T, 1> *dst,
+                        int64_t scalar_element_num, bool need_merge,
+                        memref_t<__ubuf__ T, 1> *tmp_buf) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("reduceR");
+#endif
+  // NOTE: The size of tmp_buf must be at least ceil(scalar_element_num / 2).
+  reduce_r_core_on_scalar_impl<OP, T>(src0, dst, scalar_element_num, need_merge, tmp_buf);
 }
 
 template <ReduceOpTy OP, typename T>
@@ -350,7 +419,7 @@ reduce_r_vcg(memref_t<__ubuf__ T, 1> *src0, memref_t<__ubuf__ T, 1> *dst,
   if (scalar_element_num != 0) {
     check_inputs_of_reduce_r(src0, dst, tmp_buf, initvalue);
     bool need_merge = !(vector_element_num == 0);
-    reduce_r_core_on_scalar<OP, T>(src0, dst, scalar_element_num, need_merge);
+    reduce_r_core_on_scalar<OP, T>(src0, dst, scalar_element_num, need_merge, tmp_buf);
   }
 }
 
@@ -371,7 +440,7 @@ reduce_r(memref_t<__ubuf__ T, 1> *src0, memref_t<__ubuf__ T, 1> *dst,
   if (scalar_element_num != 0) {
     check_inputs_of_reduce_r(src0, dst, tmp_buf, initvalue);
     bool need_merge = !(vector_element_num == 0);
-    reduce_r_core_on_scalar<OP, T>(src0, dst, scalar_element_num, need_merge);
+    reduce_r_core_on_scalar<OP, T>(src0, dst, scalar_element_num, need_merge, tmp_buf);
   }
 }
 

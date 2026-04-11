@@ -1289,6 +1289,97 @@ isnan_value(T data) {
   return static_cast<float>(data) != static_cast<float>(data);
 }
 
+/// Dichotomy-based scalar reduction for SUM and PROD operations.
+/// Implements tree-based reduction to reduce to target_size elements.
+/// Returns the final size after reduction.
+/// The result is stored in tmp_buffer[0..return_value-1].
+///
+/// IMPORTANT: target_size MUST be a power of 2 (including 1).
+/// This is required because the algorithm halves the current size in each iteration.
+/// Caller must ensure this constraint, as no runtime check is performed in AICore device code.
+template <ReduceOpTy OP, typename T>
+__aiv__ __attribute__((always_inline))
+std::enable_if_t<(OP == ReduceOpTy::REDUCE_SUM || OP == ReduceOpTy::REDUCE_PROD), int64_t>
+scalar_reduce_dichotomy_to_target(__ubuf__ T *src_ptr, int64_t stride, int64_t n,
+                                  __ubuf__ T *tmp_buffer, int64_t target_size) {
+  // NOTE: target_size must be a power of 2.
+  const int64_t dichotomy_num = Log2(n);
+  const int64_t main_size = static_cast<int64_t>(1) << dichotomy_num;
+  const int64_t tail_size = n - main_size;
+
+  // Step 1: First dichotomy - reduce main part
+  int64_t half = main_size / 2;
+  for (int64_t i = 0; i < half; ++i) {
+    T val0 = *(src_ptr + i * stride);
+    T val1 = *(src_ptr + (i + half) * stride);
+    tmp_buffer[i] = reduction_scalar_operation<OP, T>(val0, val1);
+  }
+
+  // Step 2: Process tail if exists
+  if (tail_size > 0) {
+    int64_t tail_loop_num = CEIL_DIV(tail_size, half);
+    for (int64_t loop = 0; loop < tail_loop_num; ++loop) {
+      int64_t tail_start = main_size + loop * half;
+      int64_t sub_tail_size = MIN(tail_size - loop * half, half);
+      for (int64_t i = 0; i < sub_tail_size; ++i) {
+        T tail_val = *(src_ptr + (tail_start + i) * stride);
+        tmp_buffer[i] = reduction_scalar_operation<OP, T>(tmp_buffer[i], tail_val);
+      }
+    }
+  }
+
+  // Step 3: Continue dichotomy until target_size or single element
+  int64_t current_size = half;
+  while (current_size > target_size) {
+    int64_t new_size = current_size / 2;
+    for (int64_t i = 0; i < new_size; ++i) {
+      tmp_buffer[i] = reduction_scalar_operation<OP, T>(tmp_buffer[i], tmp_buffer[i + new_size]);
+    }
+    current_size = new_size;
+  }
+
+  return current_size;
+}
+
+/// This is a wrapper that reduces to a single element (target_size = 1).
+template <ReduceOpTy OP, typename T>
+__aiv__ __attribute__((always_inline))
+std::enable_if_t<(OP == ReduceOpTy::REDUCE_SUM || OP == ReduceOpTy::REDUCE_PROD), T>
+scalar_reduce_dichotomy(__ubuf__ T *src_ptr, int64_t stride, int64_t n,
+                        __ubuf__ T *tmp_buffer) {
+  scalar_reduce_dichotomy_to_target<OP, T>(src_ptr, stride, n, tmp_buffer, 1);
+  return tmp_buffer[0];
+}
+
+/// Reduces to num_per_repeat elements using dichotomy, then uses pairwise reduction.
+/// This matches the vcadd instruction behavior which does pairwise accumulation.
+template <ReduceOpTy OP, typename T>
+__aiv__ __attribute__((always_inline))
+std::enable_if_t<(OP == ReduceOpTy::REDUCE_SUM), T>
+scalar_reduce_to_num_per_repeat_pairwise(__ubuf__ T *src_ptr, int64_t stride, int64_t n,
+                                         __ubuf__ T *tmp_buffer) {
+  constexpr int num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
+  
+  // Dichotomy to num_per_repeat elements
+  int64_t current_size = scalar_reduce_dichotomy_to_target<OP, T>(
+      src_ptr, stride, n, tmp_buffer, num_per_repeat);
+  
+  // Pairwise reduction until single element
+  while (current_size > 1) {
+    int64_t half_size = (current_size + 1) / 2;
+    for (int64_t i = 0; i < half_size; ++i) {
+      if (2 * i + 1 < current_size) {
+        tmp_buffer[i] = reduction_scalar_operation<OP, T>(tmp_buffer[2 * i], tmp_buffer[2 * i + 1]);
+      } else {
+        tmp_buffer[i] = tmp_buffer[2 * i];
+      }
+    }
+    current_size = half_size;
+  }
+  
+  return tmp_buffer[0];
+}
+
 extern "C" {
 //===-------------------------------------------------------------------===//
 // reduce ar, 2 dim

@@ -559,6 +559,30 @@ getExtraBufferSizeForReduceOpSingleDim(Operation *op, BufferSizeUnit unit,
     // reduce_sum/reduce_max/reduce_min/reduce_prod
     // reduce_or/reduce_and last axis
     // reduce(R/AR).
+
+    // For SUM and PROD on the last axis, consider potential scalar path.
+    // we allocate enough buffer for both vector and scalar paths(unaligned scenarios).
+    // Scalar path requires ceil(size1/2) elements for dichotomy reduction.
+    if (arithOp == hivm::ReduceOperation::sum ||
+        arithOp == hivm::ReduceOperation::prod) {
+
+      int64_t size1 = srcType.hasStaticShape() ?
+                      srcType.getShape()[reductionDim] :
+                      srcAllocTotalSize.value();
+
+      int64_t scalarPathBuffer = (size1 + 1) / 2;
+
+      std::optional<int64_t> vectorPathBuffer =
+          refineReduceExtraBufferSize(srcType, srcAllocTotalSize.value(),
+                                      reductionDim, arithOp, saveUbUf);
+
+      if (vectorPathBuffer.has_value()) {
+        return std::max(scalarPathBuffer, vectorPathBuffer.value());
+      } else {
+        return scalarPathBuffer;
+      }
+    }
+
     return refineReduceExtraBufferSize(srcType, srcAllocTotalSize.value(),
                                        reductionDim, arithOp, saveUbUf, dstType);
   }

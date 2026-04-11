@@ -224,13 +224,40 @@ get_scalar_operation_init_value(memref_t<__ubuf__ T, 2> *src,
   return *(src->aligned + src->offset + col * (src->strides[1]));
 }
 
+// Implementation for SUM and PROD using dichotomy
 template <ReduceOpTy OP, typename T>
-__aiv__ inline __attribute__((always_inline)) void
-scalar_reduce_ra(memref_t<__ubuf__ T, 2> *src0,
-                 memref_t<__ubuf__ T, 2> *dst) {
-#ifdef ENABLE_CPU_TRACE_INTRINSIC
-  WARN_SCALAR_IMPL("reduceRA");
-#endif
+__aiv__ __attribute__((always_inline))
+std::enable_if_t<(OP == ReduceOpTy::REDUCE_SUM || OP == ReduceOpTy::REDUCE_PROD), void>
+scalar_reduce_ra_impl(memref_t<__ubuf__ T, 2> *src0,
+                      memref_t<__ubuf__ T, 2> *dst,
+                      memref_t<__ubuf__ T, 1> *tmp_buf) {
+  const int64_t src0_size0 = src0->sizes[0];
+  const int64_t src0_size1 = src0->sizes[1];
+  const int64_t src0_stride0 = src0->strides[0];
+  const int64_t src0_stride1 = src0->strides[1];
+  const int64_t dst_stride1 = dst->strides[1];
+
+  __ubuf__ T *src0_ptr = src0->aligned + src0->offset;
+  __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
+  __ubuf__ T *tmp_buf_ptr = tmp_buf->aligned + tmp_buf->offset;
+
+  INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  for (int64_t col = 0; col < src0_size1; ++col) {
+    __ubuf__ T *col_ptr = src0_ptr + col * src0_stride1;
+    __ubuf__ T *dst_val_ptr = dst_ptr + col * dst_stride1;
+    *dst_val_ptr = scalar_reduce_dichotomy<OP, T>(col_ptr, src0_stride0, src0_size0, tmp_buf_ptr);
+  }
+  INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+}
+
+// Implementation for other ops using naive sequential reduction
+template <ReduceOpTy OP, typename T>
+__aiv__ inline __attribute__((always_inline))
+std::enable_if_t<!(OP == ReduceOpTy::REDUCE_SUM || OP == ReduceOpTy::REDUCE_PROD), void>
+scalar_reduce_ra_impl(memref_t<__ubuf__ T, 2> *src0,
+                      memref_t<__ubuf__ T, 2> *dst) {
   const int64_t src0_size0 = src0->sizes[0];
   const int64_t src0_size1 = src0->sizes[1];
   const int64_t src0_stride0 = src0->strides[0];
@@ -242,7 +269,6 @@ scalar_reduce_ra(memref_t<__ubuf__ T, 2> *src0,
 
   INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
-
   for (int64_t col = 0; col < src0_size1; ++col) {
     __ubuf__ T *dst_val_ptr = dst_ptr + col * dst_stride1;
     *dst_val_ptr = get_scalar_operation_init_value<OP>(src0, col);
@@ -252,9 +278,23 @@ scalar_reduce_ra(memref_t<__ubuf__ T, 2> *src0,
       *dst_val_ptr = reduction_scalar_operation<OP, T>(*dst_val_ptr, *cur_src0_ptr);
     }
   }
-
   INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+}
+
+template <ReduceOpTy OP, typename T>
+__aiv__ inline __attribute__((always_inline)) void
+scalar_reduce_ra(memref_t<__ubuf__ T, 2> *src0,
+                 memref_t<__ubuf__ T, 2> *dst,
+                 memref_t<__ubuf__ T, 1> *tmp_buf) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("reduceRA");
+#endif
+  if constexpr (OP == ReduceOpTy::REDUCE_SUM || OP == ReduceOpTy::REDUCE_PROD) {
+    scalar_reduce_ra_impl<OP, T>(src0, dst, tmp_buf);
+  } else {
+    scalar_reduce_ra_impl<OP, T>(src0, dst);
+  }
 }
 
 template <typename T>
@@ -286,12 +326,13 @@ template <ReduceOpTy OP, typename T>
 __aiv__ inline __attribute__((always_inline)) void
 scalar_reduce_ra(memref_t<__ubuf__ T, 2> *src0,
                  memref_t<__ubuf__ T, 2> *dst,
+                 memref_t<__ubuf__ T, 1> *tmp_buf,
                  int64_t element_nums_offset_to_aligned) {
   memref_t<__ubuf__ T, 2> scalar_src0 = *src0;
   memref_t<__ubuf__ T, 2> scalar_dst_value = *dst;
   get_scalar_memref_t(element_nums_offset_to_aligned, src0, &scalar_src0);
   get_scalar_memref_t(element_nums_offset_to_aligned, dst, &scalar_dst_value);
-  scalar_reduce_ra<OP>(&scalar_src0, &scalar_dst_value);
+  scalar_reduce_ra<OP>(&scalar_src0, &scalar_dst_value, tmp_buf);
 }
 
 template <ReduceOpTy OP, typename T>
@@ -333,7 +374,7 @@ reduce_ra(memref_t<__ubuf__ T, 2> *src0,
       // source and dest. The unaligned part is calculated using the scalar,
       // and the aligned part is calculated using the vector.
       int64_t element_nums_offset_to_aligned = reduction_element_nums_to_move_offset_aligned<T>(src0->offset);
-      scalar_reduce_ra<OP>(src0, dst, element_nums_offset_to_aligned);
+      scalar_reduce_ra<OP>(src0, dst, tmp_buf, element_nums_offset_to_aligned);
 
       // If the scalar has processed all data, the vector does not need to be called for processing.
       auto last_dim_ub_element_nums = src0->sizes[1] * src0->strides[1];
@@ -345,12 +386,12 @@ reduce_ra(memref_t<__ubuf__ T, 2> *src0,
     }
 
     // After an additional same offset is added, the addresses can not be 32-byte aligned.
-    scalar_reduce_ra<OP>(src0, dst);
+    scalar_reduce_ra<OP>(src0, dst, tmp_buf);
     return;
   }
 
   // The stride sizes of source and dest are not aligned.
-  scalar_reduce_ra<OP>(src0, dst);
+  scalar_reduce_ra<OP>(src0, dst, tmp_buf);
 }
 
 #endif // REDUCE_RA_IMPL_H
