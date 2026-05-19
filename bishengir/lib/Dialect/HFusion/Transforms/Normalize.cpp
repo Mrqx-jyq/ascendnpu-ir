@@ -6390,13 +6390,128 @@ public:
   }
 };
 
-/// nomalize frexp(x), which is mantissa for frexp(x), to x * (ilogb(x) +
-/// 1)^(-1)
+/// Convert exponent value to f32 tensor type.
+/// Supports i32, f16, f32 exponents.
+static Value convertExpToFloat(PatternRewriter &rewriter, Location loc, Value exp) {
+    Type expType = getElementTypeOrSelf(exp.getType());
+    if (expType.isInteger(32)) {
+        // i32 -> f32 (values > 16M may lose precision, acceptable for exponent)
+        return hfusion::castTo(rewriter, exp, rewriter.getF32Type());
+    } else if (expType.isF16() || expType.isF32()) {
+        return exp;
+    } else {
+        llvm::report_fatal_error("Type of exp is invalid");
+    }
+}
+
+/// If exponent is NaN, returns NaN; otherwise returns the exp2 result.
+static Value propagateNaNForExp2(PatternRewriter &rewriter, Location loc,
+                                 Value expFloat, Value exp2Result) {
+    // Create NaN mask for exponent
+    auto isNanTensorType = utils::getTensorTypeWithSameShape(expFloat.getType(), rewriter.getI1Type());
+    Value isNanMask = rewriter.create<IsNanOp>(loc, isNanTensorType, expFloat)->getResult(0);
+    
+    auto empty = utils::createEmptyOp(rewriter, loc, expFloat);
+    // Select NaN -> expFloat (NaN), else -> exp2Result
+    return rewriter.create<SelectOp>(loc, TypeRange(empty),
+                                     ValueRange({isNanMask, expFloat, exp2Result}),
+                                     ValueRange(empty))
+           ->getResult(0);
+}
+
+/// Return the negative infinity constant for the given floating-point bitwidth (16 or 32).
+static Value getComplementOfInfFloatConstValue(PatternRewriter &rewriter, Location loc,
+                                   int bitwidth, Value expFloat) {
+  if (bitwidth == 32) {
+    // 32-bit float -inf bit pattern: 0xFF800000
+    arith::ConstantOp maskCstOp = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getFloatAttr(getElementTypeOrSelf(expFloat.getType()), -1 * (0x7F800000)));
+    return maskCstOp->getResults()[0];
+  }
+  if (bitwidth == 16) {
+    // 16-bit float -inf bit pattern: 0xFC00
+    arith::ConstantOp maskCstOp = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getFloatAttr(getElementTypeOrSelf(expFloat.getType()), -1 * (0x7C00)));
+    return maskCstOp->getResults()[0];
+  }
+  llvm::report_fatal_error("unsupported bitwidth");
+}
+
+/// Handle exponent infinities: +inf -> inf, -inf -> 0.0, else pass through.
+static Value handleExponentInfinity(PatternRewriter &rewriter, Location loc,
+                             Value expFloat, Value nanOutOp) {
+  auto expFloatType = getElementTypeOrSelf(expFloat.getType());
+  Value constInf = getComplementOfInfFloatConstValue(
+      rewriter, loc, expFloatType.getIntOrFloatBitWidth(), expFloat);
+
+  // Create filler for infinity constant
+  auto fillEmptyOp = utils::createEmptyOp(rewriter, loc, expFloat);
+  auto fillInfOp = rewriter.create<linalg::FillOp>(
+      loc, TypeRange(fillEmptyOp), ValueRange({constInf}),
+      ValueRange({fillEmptyOp}));
+
+  // Check positive infinity
+  auto isPositiveInf = createCmpOp(rewriter, loc, expFloat,
+                                   fillInfOp->getResult(0), hfusion::CompareFn::veq)
+                           ->getResult(0);
+  auto tempinfOut = utils::createEmptyOp(rewriter, loc, expFloat);
+  // For +inf: keep expFloat (inf), otherwise keep nanOutOp (which may be NaN or exp2 result)
+  auto infOutOp = rewriter.create<SelectOp>(
+      loc, TypeRange{tempinfOut},
+      ValueRange({isPositiveInf, expFloat, nanOutOp}),
+      ValueRange(tempinfOut));
+
+  // Check any infinity (positive or negative) by comparing absolute value to infinity constant
+  auto absEmptyOp = utils::createEmptyOp(rewriter, loc, expFloat);
+  auto absExp = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp,
+                                       linalg::UnaryFn, linalg::UnaryFnAttr>(
+                    rewriter, loc, linalg::UnaryFn::abs, expFloat,
+                    ValueRange(absEmptyOp))
+                    ->getResult(0);
+  auto isInf = createCmpOp(rewriter, loc, absExp, fillInfOp->getResult(0),
+                           hfusion::CompareFn::veq)
+                   ->getResult(0);
+
+  // Negative infinity = isInf AND not isPositiveInf
+  auto notPositiveInfInit = utils::createEmptyOp(rewriter, loc, isPositiveInf);
+  auto notPositiveInf =
+      hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
+                             hfusion::UnaryFnAttr>(
+          rewriter, loc, hfusion::UnaryFn::vnot, ValueRange(isPositiveInf),
+          ValueRange(notPositiveInfInit))
+          ->getResult(0);
+  auto isNegtiveInf = createVandOp(rewriter, loc, notPositiveInf, isInf)
+                          ->getResult(0);
+
+  // Constant 0.0 for -inf case
+  auto constZeros = rewriter.create<arith::ConstantOp>(
+      loc, expFloatType, rewriter.getFloatAttr(expFloatType, 0.0));
+  auto fillZeroEmptyOp = utils::createEmptyOp(rewriter, loc, expFloat);
+  auto fillZerosOp = rewriter.create<linalg::FillOp>(
+      loc, TypeRange(fillZeroEmptyOp), ValueRange({constZeros}),
+      ValueRange({fillZeroEmptyOp}));
+
+  // Final selection: if negative infinity -> 0.0, else if positive infinity -> inf (from infOutOp),
+  // otherwise -> previous result (nanOutOp from earlier propagation)
+  auto neginfOutInit = utils::createEmptyOp(rewriter, loc, expFloat);
+  auto negiInfOutOp = rewriter.create<SelectOp>(
+      loc, TypeRange{neginfOutInit},
+      ValueRange({isNegtiveInf, fillZerosOp->getResults()[0],
+                  infOutOp->getResults()[0]}),
+      ValueRange(neginfOutInit));
+
+  return negiInfOutOp->getResults()[0];
+}
+
+/// Normalize ldexp(x, exp) = x * 2^exp to multiplication operation
+/// support: x -> f16/f32, exp -> f16/f32/int32
 struct NormalizeLdexpOp : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {
 public:
   using OpRewritePattern<hfusion::ElemwiseBinaryOp>::OpRewritePattern;
+  
   LogicalResult matchAndRewrite(hfusion::ElemwiseBinaryOp op,
                                 PatternRewriter &rewriter) const override {
+    // Check if operation uses pure tensor semantics
     if (!op.hasPureTensorSemantics()) {
       return failure();
     }
@@ -6405,27 +6520,49 @@ public:
       return failure();
     }
 
+    // Get mantissa input (x)
     Value input = op.getInputs()[0];
-#ifndef NDEBUG
     auto inType = getElementTypeOrSelf(input.getType());
+    // Get exponent and convert to float (i32 -> f32, f16/f32 unchanged)
+    Value exp = op.getInputs()[1];
+
+#ifndef NDEBUG
     assert((inType.isF16() || inType.isF32()) &&
            "only support input Type is f16 or f32");
 #endif
     auto loc = op->getLoc();
 
-    auto mulEmptyOp = utils::createEmptyOp(rewriter, loc, input);
+    Value expFloat = convertExpToFloat(rewriter, loc, exp);
+    // Temporary tensor for result shape propagation
+    auto mulEmptyRight = utils::createEmptyOp(rewriter, loc, expFloat);
+    
+    // Compute 2^exp using hardware-accelerated exp2 operation
+    auto *mulRightOp = hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp,
+                                    hfusion::UnaryFn, hfusion::UnaryFnAttr>(
+                            rewriter, op->getLoc(), hfusion::UnaryFn::exp2, ValueRange{expFloat},
+                               ValueRange(mulEmptyRight)); 
+   
+    // Handle NaN exponent: propagate NaN to output
+    Value nanOutOp = propagateNaNForExp2(rewriter, loc, expFloat, mulRightOp->getResults()[0]);
+    // Handle infinite exponent: +inf -> +inf, -inf -> 0.0, normal values unchanged
+    Value expHandled = handleExponentInfinity(rewriter, loc, expFloat, nanOutOp);
 
-    auto xMul =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+    // Temporary tensor for multiplication result
+    auto mulEmpty = utils::createEmptyOp(rewriter, loc, input);
+    
+    // Replace ldexp(x, exp) with x * (2^exp) after NaN/Inf corrections
+    auto xMul = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
                                 linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::mul,
-            ValueRange{input, op.getInputs()[1]}, ValueRange(mulEmptyOp))
-            ->getResult(0);
+                        rewriter, loc, linalg::BinaryFn::mul,
+                        ValueRange{input, expHandled}, ValueRange(mulEmpty))
+                                ->getResult(0);
 
+    // Replace the original ldexp op with multiplication
     rewriter.replaceOp(op, xMul);
     return success();
   }
 };
+
 
 /// normalize powf(baseNum, exponent) as below
 /// powf(x, y) = 1, when abs(x) = 1 and abs(y) = inf
