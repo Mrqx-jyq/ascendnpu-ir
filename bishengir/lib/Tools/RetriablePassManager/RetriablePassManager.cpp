@@ -101,6 +101,9 @@ LogicalResult RetriablePassManager::runWithRetry(
     std::vector<std::unique_ptr<Diagnostic>> &collectedDiagnostics,
     std::vector<AppliedCompileFallback> &appliedFallbacks) {
   while (true) {
+    for (const std::unique_ptr<RetryPolicy> &policy : policies)
+      policy->onBeforePipelineAttempt();
+
     const size_t pipelineAttemptDiagStart = collectedDiagnostics.size();
     OwningOpRef<ModuleOp> attempt = cast<ModuleOp>(mod->clone());
     ModuleOp attemptModule = attempt.get();
@@ -121,29 +124,37 @@ LogicalResult RetriablePassManager::runWithRetry(
         collectedDiagnostics.size() - pipelineAttemptDiagStart);
 
     RetryPolicy *matchedPolicy = nullptr;
-    std::optional<std::string> disabledOption;
+    std::optional<std::string> retryOption;
     for (const std::unique_ptr<RetryPolicy> &policy : policies) {
       if (std::optional<std::string> action =
               policy->onFailure(attemptDiagnostics, config)) {
-        disabledOption = std::move(action);
+        retryOption = std::move(action);
         matchedPolicy = policy.get();
         break;
       }
     }
 
-    if (!disabledOption || !matchedPolicy)
+    if (!retryOption || !matchedPolicy)
       return failure();
 
-    LLVM_DEBUG(llvm::dbgs() << "[BiShengHIR] Pipeline retry ("
-                            << matchedPolicy->userVisibleRetryCause()
-                            << "): disabling " << *disabledOption
-                            << " and retrying\n");
-    if (llvm::none_of(appliedFallbacks, [&](const AppliedCompileFallback &a) {
-          return a.disabledOption == *disabledOption;
-        }))
-      appliedFallbacks.push_back({*disabledOption,
-                                  std::string(matchedPolicy->userVisibleRetryCause())});
-    emitFallbackNote(matchedPolicy->userVisibleRetryCause(), *disabledOption);
+    LLVM_DEBUG({
+      llvm::dbgs() << "[BiShengHIR] Pipeline retry ("
+                   << matchedPolicy->userVisibleRetryCause() << "): ";
+      if (matchedPolicy->recordsCompileFallback())
+        llvm::dbgs() << "disabling " << *retryOption;
+      else
+        llvm::dbgs() << "adjusting " << *retryOption;
+      llvm::dbgs() << " and retrying\n";
+    });
+    if (matchedPolicy->recordsCompileFallback()) {
+      if (llvm::none_of(appliedFallbacks, [&](const AppliedCompileFallback &a) {
+            return a.disabledOption == *retryOption;
+          }))
+        appliedFallbacks.push_back(
+            {*retryOption,
+             std::string(matchedPolicy->userVisibleRetryCause())});
+      emitFallbackNote(matchedPolicy->userVisibleRetryCause(), *retryOption);
+    }
 
     collectedDiagnostics.resize(pipelineAttemptDiagStart);
   }

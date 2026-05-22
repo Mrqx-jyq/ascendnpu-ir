@@ -28,8 +28,8 @@
 
 namespace bishengir {
 
-/// Invoked when a pipeline attempt fails. Returns the CLI option name that was
-/// automatically disabled to recover from the failure, or std::nullopt if this
+/// Invoked when a pipeline attempt fails. Returns the CLI option name involved
+/// in the recovery action (e.g. disabled or tuned), or std::nullopt if this
 /// policy does not apply or cannot retry further.
 class RetryPolicy {
 public:
@@ -40,6 +40,14 @@ public:
   virtual llvm::StringRef userVisibleRetryCause() const {
     return "Compile error";
   }
+
+  /// If false, onFailure may still trigger a retry but no fallback note or
+  /// summary entry is recorded (e.g. tuning adjusts an option instead of
+  /// disabling it).
+  virtual bool recordsCompileFallback() const { return true; }
+
+  /// Called before each pipeline clone/run attempt.
+  virtual void onBeforePipelineAttempt() const {}
 
   virtual std::optional<std::string> onFailure(
       llvm::ArrayRef<std::unique_ptr<mlir::Diagnostic>> attemptDiagnostics,

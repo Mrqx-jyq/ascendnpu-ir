@@ -20,6 +20,7 @@
 #include "bishengir/Tools/RetriablePassManager/RetriablePassManager.h"
 #include "bishengir/Tools/RetriablePassManager/CbufOverflowRetryPolicy.h"
 #include "bishengir/Tools/RetriablePassManager/CcOverflowRetryPolicy.h"
+#include "bishengir/Tools/RetriablePassManager/TuningRetryPolicy.h"
 #include "bishengir/Tools/RetriablePassManager/UbOverflowRetryPolicy.h"
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
 #include "bishengir/Tools/bishengir-compile/PassPipeline.h"
@@ -258,51 +259,28 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
     retriablePm.addPolicy(std::make_unique<CcOverflowRetryPolicy>());
   }
 
-  bool hirCompileSuccess = false;
+  if (config.getEnableTuningMode() && !config.getEnableTritonKernelCompile()) {
+    bool originalPrintIrAfterFailure = false;
+    auto &opts = cl::getRegisteredOptions();
+    if (opts.count("mlir-print-ir-after-failure") != 0) {
+      originalPrintIrAfterFailure =
+          static_cast<llvm::cl::opt<bool> *>(opts["mlir-print-ir-after-failure"])
+              ->getValue();
+
+      static_cast<llvm::cl::opt<bool> *>(opts["mlir-print-ir-after-failure"])
+          ->setValue(false);
+    }
+    retriablePm.addPolicy(
+        std::make_unique<TuningRetryPolicy>(originalPrintIrAfterFailure));
+  }
+
   std::vector<AppliedCompileFallback> retriablePipelineFallbacks;
-  int tryTimes = config.getEnableTuningMode() || config.getEnableTritonKernelCompile() ? 1 : 5;
-  auto &opts = cl::getRegisteredOptions();
-  bool originalPrintIrAfterFailure = false;
-  if (opts.count("mlir-print-ir-after-failure") != 0) {
-    originalPrintIrAfterFailure = 
-      static_cast<llvm::cl::opt<bool> *>(opts["mlir-print-ir-after-failure"])
-        ->getValue();
-
-    static_cast<llvm::cl::opt<bool> *>(opts["mlir-print-ir-after-failure"])
-        ->setValue(false);
-  }
-
-  for (int i = 0; i < tryTimes; i++) {
-    // The diagnostics information is cleared in each loop to ensure that 
-    // only the error information about the last success or failure is printed.
-    collectedDiagnostics.clear();
-
-    bool isLastAttempt = (i == tryTimes - 1);
-    if (isLastAttempt && originalPrintIrAfterFailure) {
-      // Only print failured IR after the last attempt.
-      static_cast<llvm::cl::opt<bool> *>(opts["mlir-print-ir-after-failure"])
-        ->setValue(true);
-    }
-
-    LDBG("Attempt number: " << i << " with max buffer count tuning delta: "
-                            << config.getHfusionMaxBufferCountTuning());
-
-    const size_t tuningAttemptDiagStart = collectedDiagnostics.size();
-    auto buildPipeline = std::bind(buildBiShengHIRPipeline, std::placeholders::_1,
-                                   std::cref(config));
-    if (succeeded(retriablePm.runWithRetry(mod, buildPipeline, "BiShengHIR",
-                                           collectedDiagnostics,
-                                           retriablePipelineFallbacks))) {
-      hirCompileSuccess = true;
-      break;
-    }
-
-    if (i + 1 < tryTimes)
-      collectedDiagnostics.resize(tuningAttemptDiagStart);
-
-    // increase max buffers by 2 in HFusion auto schedule
-    config.increaseMaxBufferCountTuning(2);
-  }
+  auto buildPipeline = std::bind(buildBiShengHIRPipeline, std::placeholders::_1,
+                                 std::cref(config));
+  bool hirCompileSuccess =
+      succeeded(retriablePm.runWithRetry(mod, buildPipeline, "BiShengHIR",
+                                         collectedDiagnostics,
+                                         retriablePipelineFallbacks));
 
   // Restore to the default handler.
   diagEngine.eraseHandler(handlerID);

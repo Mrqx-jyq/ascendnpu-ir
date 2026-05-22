@@ -47,7 +47,7 @@ public:
   RetriablePassManager(BiShengIRCompileMainConfig &config, mlir::MLIRContext *ctx);
 
   /// Register a retry policy. Policies are tried in registration order on
-  /// failure; the first policy that returns a disabled option triggers a retry.
+  /// failure; the first policy that returns a recovery option triggers a retry.
   void addPolicy(std::unique_ptr<RetryPolicy> policy);
 
   /// Build a fresh BiShengIRPassManager, run buildPipeline, and execute it on
