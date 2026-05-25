@@ -3483,6 +3483,57 @@ func.func @test_hfusion_cyl_bessel_i0_ops(%arg0 : tensor<5x1xf16>) -> tensor<5x1
   return %ret : tensor<5x1xf16>
 }
 
+
+// -----
+
+// CHECK-LABEL: module {
+// CHECK-NEXT:   func.func @test_hfusion_nextafter_ops(%arg0: tensor<5x1xf16>, %arg1: tensor<5x1xf16>) -> tensor<5x1xf16> {
+// CHECK-NEXT:     %c-1_i16 = arith.constant -1 : i16
+// CHECK-NEXT:     %c1_i16 = arith.constant 1 : i16
+// CHECK-NEXT:     %c0_i16 = arith.constant 0 : i16
+// CHECK-NEXT:     %c32767_i16 = arith.constant 32767 : i16
+// CHECK-NEXT:     %c-32768_i16 = arith.constant -32768 : i16
+// CHECK-NEXT:     %0 = tensor.empty() : tensor<5x1xf16>
+// CHECK-NEXT:     %1 = tensor.empty() : tensor<5x1xi16>
+// CHECK-NEXT:     %2 = tensor.empty() : tensor<5x1xi1>
+// CHECK-NEXT:     %3 = hfusion.bitcast ins(%arg0 : tensor<5x1xf16>) outs(%1 : tensor<5x1xi16>) -> tensor<5x1xi16>
+// CHECK-NEXT:     %4 = hfusion.bitcast ins(%arg1 : tensor<5x1xf16>) outs(%1 : tensor<5x1xi16>) -> tensor<5x1xi16>
+// CHECK-NEXT:     %5 = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%arg0, %arg0 : tensor<5x1xf16>, tensor<5x1xf16>) outs(%2 : tensor<5x1xi1>) -> tensor<5x1xi1>
+// CHECK-NEXT:     %6 = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} ins(%5 : tensor<5x1xi1>) outs(%2 : tensor<5x1xi1>) -> tensor<5x1xi1>
+// CHECK-NEXT:     %7 = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%arg1, %arg1 : tensor<5x1xf16>, tensor<5x1xf16>) outs(%2 : tensor<5x1xi1>) -> tensor<5x1xi1>
+// CHECK-NEXT:     %8 = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} ins(%7 : tensor<5x1xi1>) outs(%2 : tensor<5x1xi1>) -> tensor<5x1xi1>
+// CHECK-NEXT:     %9 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>} ins(%6, %8 : tensor<5x1xi1>, tensor<5x1xi1>) outs(%2 : tensor<5x1xi1>) -> tensor<5x1xi1>
+// CHECK-NEXT:     %10 = hfusion.select ins(%6, %3, %4 : tensor<5x1xi1>, tensor<5x1xi16>, tensor<5x1xi16>) outs(%1 : tensor<5x1xi16>) -> tensor<5x1xi16>
+// CHECK-NEXT:     %11 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>} ins(%3, %c32767_i16 : tensor<5x1xi16>, i16) outs(%1 : tensor<5x1xi16>) -> tensor<5x1xi16>
+// CHECK-NEXT:     %12 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>} ins(%4, %c32767_i16 : tensor<5x1xi16>, i16) outs(%1 : tensor<5x1xi16>) -> tensor<5x1xi16>
+// CHECK-NEXT:     %13 = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%arg0, %arg1 : tensor<5x1xf16>, tensor<5x1xf16>) outs(%2 : tensor<5x1xi1>) -> tensor<5x1xi1>
+// CHECK-NEXT:     %14 = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%11, %c0_i16 : tensor<5x1xi16>, i16) outs(%2 : tensor<5x1xi1>) -> tensor<5x1xi1>
+// CHECK-NEXT:     %15 = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%12, %c0_i16 : tensor<5x1xi16>, i16) outs(%2 : tensor<5x1xi1>) -> tensor<5x1xi1>
+// CHECK-NEXT:     %16 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>} ins(%3, %c-32768_i16 : tensor<5x1xi16>, i16) outs(%1 : tensor<5x1xi16>) -> tensor<5x1xi16>
+// CHECK-NEXT:     %17 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>} ins(%4, %c-32768_i16 : tensor<5x1xi16>, i16) outs(%1 : tensor<5x1xi16>) -> tensor<5x1xi16>
+// CHECK-NEXT:     %18 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>} ins(%17, %c1_i16 : tensor<5x1xi16>, i16) outs(%1 : tensor<5x1xi16>) -> tensor<5x1xi16>
+// CHECK-NEXT:     %19 = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%16, %17 : tensor<5x1xi16>, tensor<5x1xi16>) outs(%2 : tensor<5x1xi1>) -> tensor<5x1xi1>
+// CHECK-NEXT:     %20 = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} ins(%19 : tensor<5x1xi1>) outs(%2 : tensor<5x1xi1>) -> tensor<5x1xi1>
+// CHECK-NEXT:     %21 = hfusion.compare {compare_fn = #hfusion.compare_fn<vgt>} ins(%11, %12 : tensor<5x1xi16>, tensor<5x1xi16>) outs(%2 : tensor<5x1xi1>) -> tensor<5x1xi1>
+// CHECK-NEXT:     %22 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>} ins(%21, %20 : tensor<5x1xi1>, tensor<5x1xi1>) outs(%2 : tensor<5x1xi1>) -> tensor<5x1xi1>
+// CHECK-NEXT:     %23 = hfusion.select ins(%22, %c-1_i16, %c1_i16 : tensor<5x1xi1>, i16, i16) outs(%1 : tensor<5x1xi16>) -> tensor<5x1xi16>
+// CHECK-NEXT:     %24 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%3, %23 : tensor<5x1xi16>, tensor<5x1xi16>) outs(%1 : tensor<5x1xi16>) -> tensor<5x1xi16>
+// CHECK-NEXT:     %25 = hfusion.select ins(%15, %4, %18 : tensor<5x1xi1>, tensor<5x1xi16>, tensor<5x1xi16>) outs(%1 : tensor<5x1xi16>) -> tensor<5x1xi16>
+// CHECK-NEXT:     %26 = hfusion.select ins(%14, %25, %24 : tensor<5x1xi1>, tensor<5x1xi16>, tensor<5x1xi16>) outs(%1 : tensor<5x1xi16>) -> tensor<5x1xi16>
+// CHECK-NEXT:     %27 = hfusion.select ins(%13, %4, %26 : tensor<5x1xi1>, tensor<5x1xi16>, tensor<5x1xi16>) outs(%1 : tensor<5x1xi16>) -> tensor<5x1xi16>
+// CHECK-NEXT:     %28 = hfusion.select ins(%9, %10, %27 : tensor<5x1xi1>, tensor<5x1xi16>, tensor<5x1xi16>) outs(%1 : tensor<5x1xi16>) -> tensor<5x1xi16>
+// CHECK-NEXT:     %29 = hfusion.bitcast ins(%28 : tensor<5x1xi16>) outs(%0 : tensor<5x1xf16>) -> tensor<5x1xf16>
+// CHECK-NEXT:     return %29 : tensor<5x1xf16>
+// CHECK-NEXT:   }
+// CHECK-NEXT: }
+func.func @test_hfusion_nextafter_ops(%arg0 : tensor<5x1xf16>,
+                                      %arg1 : tensor<5x1xf16>)
+    -> tensor<5x1xf16> {
+  %ret = hfusion.nextafter %arg0, %arg1
+    : tensor<5x1xf16>, tensor<5x1xf16> -> tensor<5x1xf16>
+  return %ret : tensor<5x1xf16>
+}
+
 // -----
 // Test lgamma normalization for f32 input
 // lgamma(x) = ln|Γ(x)| using Lanczos approximation

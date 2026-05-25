@@ -8264,6 +8264,293 @@ private:
   }
 };
 
+// Lowers nextafter(x, y) with the same bit-stepping logic used before:
+//   if isnan(x) or isnan(y): return isnan(x) ? x : y
+//   if x == y: return y
+//   if x == 0: return y == 0 ? y : bitcast(sign(y) | 1)
+//   step = ((abs(x) > abs(y)) or (sign(x) != sign(y))) ? -1 : 1
+//   return bitcast(bitcast(x) +/- 1ULP)
+struct NormalizeNextAfterOp : public OpRewritePattern<hfusion::NextAfterOp> {
+  using OpRewritePattern<hfusion::NextAfterOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::NextAfterOp op,
+                                PatternRewriter &rewriter) const override {
+    Value x = op.getX();
+    Value y = op.getY();
+    auto elemType = getElementTypeOrSelf(x.getType());
+    auto yElemType = getElementTypeOrSelf(y.getType());
+    if (elemType != yElemType) {
+      return failure();
+    }
+    if (!elemType.isF16() && !elemType.isF32()) {
+      return failure();
+    }
+
+    int bitWidth = elemType.getIntOrFloatBitWidth();
+    int64_t signMaskVal = 0;
+    int64_t absMaskVal = 0;
+    if (!getSignAndAbsMasks(bitWidth, signMaskVal, absMaskVal)) {
+      return failure();
+    }
+
+    auto loc = op.getLoc();
+    Type intType = rewriter.getIntegerType(bitWidth);
+    Value floatEmpty = utils::createEmptyOp(rewriter, loc, x);
+    Value intEmpty =
+        utils::createEmptyOpWithTargetElemType(rewriter, loc, x, intType);
+    Value i1Empty = utils::createEmptyOpWithTargetElemType(
+        rewriter, loc, x, rewriter.getI1Type());
+    IntegerConstants constants =
+        createIntegerConstants(rewriter, loc, intType, signMaskVal, absMaskVal);
+    InputBits inputBits =
+        createInputBits(rewriter, loc, x, y, intType, intEmpty);
+    NaNAwareBits nanBits =
+        createNaNAwareBits(rewriter, loc, x, y, inputBits, intEmpty, i1Empty);
+    MagnitudeBits magnitudeBits =
+        createMagnitudeBits(rewriter, loc, inputBits, constants, intEmpty);
+    Value xAndYAreEqual =
+        createCompare(rewriter, loc, x, y, CompareFn::veq, i1Empty);
+    ZeroBits zeroBits =
+        createZeroBits(rewriter, loc, magnitudeBits, constants, i1Empty);
+    SignBits signBits =
+        createSignBits(rewriter, loc, inputBits, constants, intEmpty);
+    Value resultForXZeroYNonZero =
+        createOr(rewriter, loc, signBits.ySign, constants.one, intEmpty);
+    Value steppedResult =
+        buildDirectionalStepBits(rewriter, loc, inputBits, magnitudeBits,
+                                 signBits, constants, intEmpty, i1Empty);
+    Value resultForXZero =
+        createSelect(rewriter, loc, zeroBits.yIsZero, inputBits.yAsInt,
+                     resultForXZeroYNonZero, intEmpty);
+    Value resultAsInt = createSelect(rewriter, loc, zeroBits.xIsZero,
+                                     resultForXZero, steppedResult, intEmpty);
+    resultAsInt = createSelect(rewriter, loc, xAndYAreEqual, inputBits.yAsInt,
+                               resultAsInt, intEmpty);
+    resultAsInt =
+        createSelect(rewriter, loc, nanBits.nanInput, nanBits.resultForNanAsInt,
+                     resultAsInt, intEmpty);
+    Value nextAfter =
+        createBitcast(rewriter, loc, resultAsInt, elemType, floatEmpty);
+    rewriter.replaceOp(op, nextAfter);
+    return success();
+  }
+
+private:
+  struct IntegerConstants {
+    Value signMask;
+    Value absMask;
+    Value zero;
+    Value one;
+    Value minusOne;
+  };
+
+  struct InputBits {
+    Value xAsInt;
+    Value yAsInt;
+  };
+
+  struct NaNAwareBits {
+    Value nanInput;
+    Value resultForNanAsInt;
+  };
+
+  struct MagnitudeBits {
+    Value xAbs;
+    Value yAbs;
+  };
+
+  struct ZeroBits {
+    Value xIsZero;
+    Value yIsZero;
+  };
+
+  struct SignBits {
+    Value xSign;
+    Value ySign;
+  };
+
+  IntegerConstants createIntegerConstants(PatternRewriter &rewriter,
+                                          Location loc, Type intType,
+                                          int64_t signMaskVal,
+                                          int64_t absMaskVal) const {
+    return {
+        createIntConst(rewriter, loc, intType, signMaskVal),
+        createIntConst(rewriter, loc, intType, absMaskVal),
+        createIntConst(rewriter, loc, intType, 0),
+        createIntConst(rewriter, loc, intType, 1),
+        createIntConst(rewriter, loc, intType, -1),
+    };
+  }
+
+  InputBits createInputBits(PatternRewriter &rewriter, Location loc, Value x,
+                            Value y, Type intType, Value intEmpty) const {
+    Value xAsInt = createBitcast(rewriter, loc, x, intType, intEmpty);
+    Value yAsInt = createBitcast(rewriter, loc, y, intType, intEmpty);
+    return {xAsInt, yAsInt};
+  }
+
+  NaNAwareBits createNaNAwareBits(PatternRewriter &rewriter, Location loc,
+                                  Value x, Value y, const InputBits &inputBits,
+                                  Value intEmpty, Value i1Empty) const {
+    Value xIsNan = createNotEqual(rewriter, loc, x, x, i1Empty);
+    Value yIsNan = createNotEqual(rewriter, loc, y, y, i1Empty);
+    Value nanInput = createOr(rewriter, loc, xIsNan, yIsNan, i1Empty);
+    Value resultForNanAsInt = createSelect(
+        rewriter, loc, xIsNan, inputBits.xAsInt, inputBits.yAsInt, intEmpty);
+    return {nanInput, resultForNanAsInt};
+  }
+
+  MagnitudeBits createMagnitudeBits(PatternRewriter &rewriter, Location loc,
+                                    const InputBits &inputBits,
+                                    const IntegerConstants &constants,
+                                    Value intEmpty) const {
+    return {
+        createAnd(rewriter, loc, inputBits.xAsInt, constants.absMask, intEmpty),
+        createAnd(rewriter, loc, inputBits.yAsInt, constants.absMask, intEmpty),
+    };
+  }
+
+  ZeroBits createZeroBits(PatternRewriter &rewriter, Location loc,
+                          const MagnitudeBits &magnitudeBits,
+                          const IntegerConstants &constants,
+                          Value i1Empty) const {
+    return {
+        createCompare(rewriter, loc, magnitudeBits.xAbs, constants.zero,
+                      CompareFn::veq, i1Empty),
+        createCompare(rewriter, loc, magnitudeBits.yAbs, constants.zero,
+                      CompareFn::veq, i1Empty),
+    };
+  }
+
+  SignBits createSignBits(PatternRewriter &rewriter, Location loc,
+                          const InputBits &inputBits,
+                          const IntegerConstants &constants,
+                          Value intEmpty) const {
+    return {
+        createAnd(rewriter, loc, inputBits.xAsInt, constants.signMask,
+                  intEmpty),
+        createAnd(rewriter, loc, inputBits.yAsInt, constants.signMask,
+                  intEmpty),
+    };
+  }
+
+  Value buildDirectionalStepBits(PatternRewriter &rewriter, Location loc,
+                                 const InputBits &inputBits,
+                                 const MagnitudeBits &magnitudeBits,
+                                 const SignBits &signBits,
+                                 const IntegerConstants &constants,
+                                 Value intEmpty, Value i1Empty) const {
+    Value signsDisagree =
+        createNotEqual(rewriter, loc, signBits.xSign, signBits.ySign, i1Empty);
+    Value xMagnitudeLargerThanY =
+        createCompare(rewriter, loc, magnitudeBits.xAbs, magnitudeBits.yAbs,
+                      CompareFn::vgt, i1Empty);
+    Value resultHasSmallerMagnitude =
+        createOr(rewriter, loc, xMagnitudeLargerThanY, signsDisagree, i1Empty);
+    Value magnitudeAdjustment =
+        createSelect(rewriter, loc, resultHasSmallerMagnitude,
+                     constants.minusOne, constants.one, intEmpty);
+    return createLinalgBinOp<linalg::BinaryFn::add>(
+        rewriter, loc, inputBits.xAsInt, magnitudeAdjustment, intEmpty);
+  }
+
+  template <linalg::BinaryFn fun>
+  Value createLinalgBinOp(PatternRewriter &rewriter, Location loc, Value lhs,
+                          Value rhs, Value out) const {
+    return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                   linalg::BinaryFnAttr>(
+               rewriter, loc, fun, ValueRange{lhs, rhs}, ValueRange{out})
+        ->getResult(0);
+  }
+
+  template <hfusion::BinaryFn fun>
+  Value createHFusionBinOp(PatternRewriter &rewriter, Location loc, Value lhs,
+                           Value rhs, Value out) const {
+    return hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
+                                   hfusion::BinaryFnAttr>(
+               rewriter, loc, fun, ValueRange{lhs, rhs}, ValueRange{out})
+        ->getResult(0);
+  }
+
+  Value createIntConst(PatternRewriter &rewriter, Location loc, Type intType,
+                       int64_t value) const {
+    return rewriter.create<arith::ConstantOp>(
+        loc, intType, rewriter.getIntegerAttr(intType, value));
+  }
+
+  Value createBitcast(PatternRewriter &rewriter, Location loc, Value input,
+                      Type targetElemType, Value out) const {
+    auto shapedType = cast<ShapedType>(input.getType());
+    return rewriter
+        .create<hfusion::BitcastOp>(loc,
+                                    TypeRange{shapedType.clone(targetElemType)},
+                                    ValueRange{input}, ValueRange{out})
+        ->getResult(0);
+  }
+
+  Value createCompare(PatternRewriter &rewriter, Location loc, Value lhs,
+                      Value rhs, CompareFn compareFn, Value out) const {
+    auto cmpPredicateAttr = rewriter.getAttr<hfusion::CompareFnAttr>(compareFn);
+    auto cmpModeAttr = rewriter.getNamedAttr(
+        hfusion::CompareFnAttr::getMnemonic(), cmpPredicateAttr);
+    return rewriter
+        .create<hfusion::CompareOp>(loc, TypeRange{out}, ValueRange{lhs, rhs},
+                                    ValueRange{out}, ArrayRef{cmpModeAttr})
+        ->getResult(0);
+  }
+
+  Value createVNot(PatternRewriter &rewriter, Location loc, Value input,
+                   Value out) const {
+    return hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
+                                  hfusion::UnaryFnAttr>(
+               rewriter, loc, hfusion::UnaryFn::vnot, ValueRange{input},
+               ValueRange{out})
+        ->getResult(0);
+  }
+
+  Value createNotEqual(PatternRewriter &rewriter, Location loc, Value lhs,
+                       Value rhs, Value out) const {
+    auto eq = createCompare(rewriter, loc, lhs, rhs, CompareFn::veq, out);
+    return createVNot(rewriter, loc, eq, out);
+  }
+
+  Value createSelect(PatternRewriter &rewriter, Location loc, Value cond,
+                     Value trueValue, Value falseValue, Value out) const {
+    return rewriter
+        .create<hfusion::SelectOp>(loc, TypeRange{out},
+                                   ValueRange{cond, trueValue, falseValue},
+                                   ValueRange{out})
+        ->getResult(0);
+  }
+
+  Value createAnd(PatternRewriter &rewriter, Location loc, Value lhs, Value rhs,
+                  Value out) const {
+    return createHFusionBinOp<hfusion::BinaryFn::vand>(rewriter, loc, lhs, rhs,
+                                                       out);
+  }
+
+  Value createOr(PatternRewriter &rewriter, Location loc, Value lhs, Value rhs,
+                 Value out) const {
+    return createHFusionBinOp<hfusion::BinaryFn::vor>(rewriter, loc, lhs, rhs,
+                                                      out);
+  }
+
+  bool getSignAndAbsMasks(int bitWidth, int64_t &signMask,
+                          int64_t &absMask) const {
+    if (bitWidth == 16) {
+      signMask = 0x8000;
+      absMask = 0x7FFF;
+      return true;
+    }
+    if (bitWidth == 32) {
+      signMask = 0x80000000LL;
+      absMask = 0x7FFFFFFFLL;
+      return true;
+    }
+    return false;
+  }
+};
+
 } // namespace mlir::hfusion
 
 // Normalize scalar like tensor for linalg and hfusion ops.
@@ -8386,6 +8673,7 @@ void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {
       patterns.getContext());
   patterns.add<NormalizeErfInvOp>(patterns.getContext());
   patterns.add<NormalizeCylBesselI0Op>(patterns.getContext());
+  patterns.add<NormalizeNextAfterOp>(patterns.getContext());
 }
 
 namespace {

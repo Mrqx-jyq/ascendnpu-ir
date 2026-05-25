@@ -758,4 +758,27 @@ def CylBesselI0Op : HFusion_Op<"cyl_bessel_i0",
   }];
 }
 
+def NextAfterOp : HFusion_Op<"nextafter", [Pure, SameOperandsAndResultType]> {
+  let summary = [{
+    Computes the element-wise next representable floating-point value
+  }];
+
+  let description = [{
+    Computes the next representable floating-point value after `x`
+    in the direction of `y`.
+    The operands and result must have the same ranked tensor type.
+  }];
+
+  let arguments = (ins
+    RankedTensorOf<[F16, F32]>:$x,
+    RankedTensorOf<[F16, F32]>:$y
+  );
+
+  let results = (outs RankedTensorOf<[F16, F32]>:$output);
+
+  let assemblyFormat = [{
+    $x `,` $y attr-dict `:` type($x) `,` type($y) `->` type($output)
+  }];
+}
+
 #endif // BISHENGIR_DIALECT_HFUSION_IR_HFUSIONOPS_TD
