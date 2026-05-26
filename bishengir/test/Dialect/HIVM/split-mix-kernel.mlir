@@ -357,3 +357,53 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
     return
   }
 }
+
+// -----
+
+module {
+  // CHECK-LABEL: func.func @test_loop_core_type_annotation_mix_aic
+  // CHECK-SAME: hivm.func_core_type = #hivm.func_core_type<AIC>
+  // CHECK:      %[[LOOP_RES:.*]] = scf.for
+  // CHECK:        %[[MMAD:.*]] = hivm.hir.mmadL1
+  // CHECK:        %[[FIXPIPE:.*]] = hivm.hir.fixpipe {{.*}} ins(%[[MMAD]]
+  // CHECK-NEXT:   annotation.mark %[[FIXPIPE]] : tensor<128x128xf32>
+  // CHECK:        scf.yield %[[FIXPIPE]] : tensor<128x128xf32>
+  // CHECK:      return %[[LOOP_RES]],
+  // CHECK-LABEL: func.func @test_loop_core_type_annotation_mix_aiv
+  // CHECK-SAME: hivm.func_core_type = #hivm.func_core_type<AIV>
+  // CHECK:      %[[C0:.*]] = arith.constant 0 : index
+  // CHECK:      scf.for %{{.*}} = %[[C0]] to %[[C0]] step
+  // CHECK-NOT:  hivm.hir.mmadL1
+  // CHECK:      hivm.hir.vadd
+  func.func @test_loop_core_type_annotation(%arg0: tensor<128x128xf32>,
+                                            %arg1: tensor<128x128xf32>)
+      -> (tensor<128x128xf32>, tensor<128x128xf32>)
+      attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+    %cst = arith.constant 1.0 : f32
+    %true = arith.constant true
+    %c128 = arith.constant 128 : index
+    %c0 = arith.constant 0 : index
+    %c10 = arith.constant 10 : index
+    %c1 = arith.constant 1 : index
+    %empty = tensor.empty() : tensor<128x128xf32>
+    %loop_res = scf.for %i = %c0 to %c10 step %c1 iter_args(%acc = %empty)
+        -> (tensor<128x128xf32>) {
+      %vadd = hivm.hir.vadd ins(%acc, %cst : tensor<128x128xf32>, f32)
+          outs(%empty : tensor<128x128xf32>) -> tensor<128x128xf32>
+      %mmad = hivm.hir.mmadL1 {fixpipe_already_inserted = true}
+          ins(%vadd, %arg1, %true, %c128, %c128, %c128
+              : tensor<128x128xf32>, tensor<128x128xf32>, i1, index, index,
+                index)
+          outs(%acc : tensor<128x128xf32>) -> tensor<128x128xf32>
+      %fixpipe = hivm.hir.fixpipe {enable_nz2nd}
+          ins(%mmad : tensor<128x128xf32>)
+          outs(%acc : tensor<128x128xf32>) -> tensor<128x128xf32>
+      scf.yield %fixpipe : tensor<128x128xf32>
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+    %vuse = hivm.hir.vadd ins(%loop_res, %cst : tensor<128x128xf32>, f32)
+        outs(%empty : tensor<128x128xf32>) -> tensor<128x128xf32>
+    return %loop_res, %vuse : tensor<128x128xf32>, tensor<128x128xf32>
+  }
+}
+
+// -----

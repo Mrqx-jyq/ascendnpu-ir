@@ -329,6 +329,10 @@ void postProcessVectorFunc(func::FuncOp func) {
 
 static bool isLoopOfCoreType(scf::ForOp forOp, TCoreType coreType) {
   FailureOr<TCoreType> inferredCoreType = getCoreType(forOp);
+  if (auto coreTypeAttr = forOp->getAttrOfType<hivm::TCoreTypeAttr>(
+        hivm::kPipelinedLoopCoreTypeAttrName)) {
+    return coreType == coreTypeAttr.getTcoretype();
+  }
   return llvm::succeeded(inferredCoreType) &&
          coreType == inferredCoreType.value();
 }
