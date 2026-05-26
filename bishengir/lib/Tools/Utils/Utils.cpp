@@ -16,8 +16,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Tools/Utils/Utils.h"
-#include "bishengir/Pass/PassManager.h"
-#include "bishengir/Tools/BiShengIRConfigBase/Config.h"
+#include "bishengir/Tools/RetriablePassManager/RetriablePassManager.h"
+#include "bishengir/Tools/bishengir-compile/Config.h"
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/PassManager.h"
@@ -42,22 +42,9 @@ using namespace bishengir;
 
 LogicalResult bishengir::runPipeline(
     ModuleOp mod, const std::function<void(mlir::PassManager &)> &buildPipeline,
-    const BiShengIRCompileConfigBase &config, const std::string &pipelineName) {
-  bishengir::BiShengIRPassManager passManager(config, mod->getContext(),
-                                              ModuleOp::getOperationName(),
-                                              OpPassManager::Nesting::Implicit);
-  buildPipeline(passManager);
-
-  // Apply MLIR PassManager command line options.
-  // Ignore the result because the invocation point of this function might not
-  // necessarily be the command line, so the options might not be loaded.
-  (void)mlir::applyPassManagerCLOptions(passManager);
-  (void)bishengir::applyPassManagerCLOptions(passManager);
-
-  if (failed(passManager.run(mod)))
-    return mod->emitError("Failed to run " + pipelineName + " pipeline\n");
-
-  return success();
+    BiShengIRCompileMainConfig &config, const std::string &pipelineName) {
+  RetriablePassManager rpm(config, mod->getContext());
+  return rpm.runOnce(mod, buildPipeline, pipelineName);
 }
 
 llvm::LogicalResult
