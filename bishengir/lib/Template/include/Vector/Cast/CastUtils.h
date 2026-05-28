@@ -187,6 +187,16 @@ vector_cast_2d_with_overflow(memref_t<__ubuf__ SRC_T, 2> *src,
                              memref_t<__ubuf__ DST_T, 2> *dst,
                              memref_t<__ubuf__ SRC_T, 1> *tmp);
 
+template <typename SRC_T, typename DST_T>
+__aiv__ __attribute__((always_inline)) bool
+is_memref_aligned_cast_1d(memref_t<__ubuf__ SRC_T, 1> *src,
+                          memref_t<__ubuf__ DST_T, 1> *dst);
+
+template <typename SRC_T, typename DST_T>
+__aiv__ __attribute__((always_inline)) bool
+is_memref_aligned_cast_2d(memref_t<__ubuf__ SRC_T, 2> *src,
+                          memref_t<__ubuf__ DST_T, 2> *dst);
+
 #define DECLARE_VCONV(src_type, dst_type)                                      \
   template __aiv__ __attribute__((always_inline)) void vconv(                  \
       intrin_args<1, src_type, dst_type> args, CastMode cast_mode)
@@ -195,6 +205,20 @@ template <typename SRC_T, typename DST_T>
 __aiv__ __attribute__((always_inline)) void
 vector_cast_1d_with_mode(memref_t<__ubuf__ SRC_T, 1> *src,
                          memref_t<__ubuf__ DST_T, 1> *dst, CastMode cast_mode);
+
+// Scalar cast 1d with specified rounding mode
+template <typename SRC_T, typename DST_T>
+__aiv__ __attribute__((always_inline)) void
+scalar_cast_1d_with_mode(memref_t<__ubuf__ SRC_T, 1> *src,
+                         memref_t<__ubuf__ DST_T, 1> *dst,
+                         CastMode cast_mode);
+
+// Scalar cast 2d with specified rounding mode
+template <typename SRC_T, typename DST_T>
+__aiv__ __attribute__((always_inline)) void
+scalar_cast_2d_with_mode(memref_t<__ubuf__ SRC_T, 2> *src,
+                         memref_t<__ubuf__ DST_T, 2> *dst,
+                         CastMode cast_mode);
 
 #define DECLARE_CAST(src_type, dst_type, dim)                                  \
   __aiv__ __attribute__((always_inline)) void                                  \
@@ -224,19 +248,37 @@ vector_cast_1d_with_mode(memref_t<__ubuf__ SRC_T, 1> *src,
 
 #define REGISTE_CAST(src_type, dst_type, dim)                                  \
   DECLARE_CAST(src_type, dst_type, dim) {                                      \
-    vector_cast_##dim##d_with_mode<src_type, dst_type>(src, dst, cast_mode);   \
+    if (!is_memref_aligned_cast_##dim##d<src_type, dst_type>(                  \
+        src, dst))[[unlikely]] {                                               \
+      scalar_cast_##dim##d_with_mode<src_type, dst_type>(                      \
+        src, dst, cast_mode);                                                  \
+    } else {                                                                   \
+      vector_cast_##dim##d_with_mode<src_type, dst_type>(src, dst, cast_mode); \
+    }                                                                          \
   }
 
 #define REGISTE_CAST_OVERFLOW_SIZE_ALIGN(src_type, dst_type, dim)              \
   DECLARE_CAST_OVERFLOW_SIZE_ALIGN(src_type, dst_type, dim) {                  \
-    vector_cast_##dim##d_with_overflow<src_type, dst_type, false>(src, dst,    \
-                                                                  tmp);        \
+    if (!is_memref_aligned_cast_##dim##d<src_type, dst_type>(                  \
+        src, dst))[[unlikely]] {                                               \
+      scalar_cast_##dim##d_with_mode<src_type, dst_type>(                      \
+        src, dst, cast_mode);                                                  \
+    } else {                                                                   \
+      vector_cast_##dim##d_with_overflow<src_type, dst_type, false>(           \
+        src, dst, tmp);                                                        \
+    }                                                                          \
   }
 
 #define REGISTE_CAST_OVERFLOW_NO_SIZE_ALIGN(src_type, dst_type, dim)           \
   DECLARE_CAST_OVERFLOW_NO_SIZE_ALIGN(src_type, dst_type, dim) {               \
-    vector_cast_##dim##d_with_overflow<src_type, dst_type, true>(src, dst,     \
-                                                                 tmp);         \
+    if (!is_memref_aligned_cast_##dim##d<src_type, dst_type>(                  \
+        src, dst))[[unlikely]] {                                               \
+      scalar_cast_##dim##d_with_mode<src_type, dst_type>(                      \
+        src, dst, cast_mode);                                                  \
+    } else {                                                                   \
+      vector_cast_##dim##d_with_overflow<src_type, dst_type, true>(            \
+        src, dst, tmp);                                                        \
+    }                                                                          \
   }
 
 #define REGISTE_CAST_OVERFLOW(src_type, dst_type, dim)                         \
@@ -252,7 +294,13 @@ vector_cast_1d_with_mode(memref_t<__ubuf__ SRC_T, 1> *src,
 
 #define REGISTE_CAST_WITH_TEMP(src_type, dst_type, dim)                        \
   DECLARE_CAST_WITH_TEMP(src_type, dst_type, dim) {                            \
-    vector_cast_##dim##d_with_temp<src_type, dst_type>(src, dst, temp);        \
+    if (!is_memref_aligned_cast_##dim##d<src_type, dst_type>(                  \
+        src, dst))[[unlikely]] {                                               \
+      scalar_cast_##dim##d_with_mode<src_type, dst_type>(                      \
+        src, dst, cast_mode);                                                  \
+    } else {                                                                   \
+      vector_cast_##dim##d_with_temp<src_type, dst_type>(src, dst, temp);      \
+    }                                                                          \
   }
 
 extern "C" {

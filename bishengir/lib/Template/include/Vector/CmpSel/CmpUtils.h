@@ -31,6 +31,28 @@ __aiv__ __attribute__((always_inline)) void
 vector_compare_vs_1d(memref_t<__ubuf__ T, 1> *src0, T scalar,
                      memref_t<__ubuf__ bool, 1> *dst);
 
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool
+is_memref_aligned_compare_vv_1d(memref_t<__ubuf__ T, 1> *src0,
+                                memref_t<__ubuf__ T, 1> *src1,
+                                memref_t<__ubuf__ bool, 1> *dst);
+
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool
+is_memref_aligned_compare_vs_1d(memref_t<__ubuf__ T, 1> *src0,
+                                memref_t<__ubuf__ bool, 1> *dst);
+
+template <VectorOpTy OP, typename T>
+__aiv__ __attribute__((always_inline)) void
+scalar_compare_vv_1d(memref_t<__ubuf__ T, 1> *src0,
+                     memref_t<__ubuf__ T, 1> *src1,
+                     memref_t<__ubuf__ bool, 1> *dst);
+
+template <VectorOpTy OP, typename T>
+__aiv__ __attribute__((always_inline)) void
+scalar_compare_vs_1d(memref_t<__ubuf__ T, 1> *src0, T scalar,
+                     memref_t<__ubuf__ bool, 1> *dst);
+
 #define DECLARE_CMP_VV(op_name, op_type, dim, dtype)                           \
   __aiv__ __attribute__((always_inline)) void                                  \
       _mlir_ciface_vcmp_##op_name##_##dim##d_##dtype(                          \
@@ -46,12 +68,22 @@ vector_compare_vs_1d(memref_t<__ubuf__ T, 1> *src0, T scalar,
 
 #define REGISTE_CMP_VV(op_name, op_type, dim, dtype)                           \
   DECLARE_CMP_VV(op_name, op_type, dim, dtype) {                               \
-    vector_compare_vv_##dim##d<op_type, dtype>(src0, src1, dst);               \
+    if (!is_memref_aligned_compare_vv_##dim##d<dtype>(                         \
+        src0, src1, dst))[[unlikely]] {                                        \
+      scalar_compare_vv_##dim##d<op_type, dtype>(src0, src1, dst);             \
+    } else {                                                                   \
+      vector_compare_vv_##dim##d<op_type, dtype>(src0, src1, dst);             \
+    }                                                                          \
   }
 
 #define REGISTE_CMP_VS(op_name, op_type, dim, dtype)                           \
   DECLARE_CMP_VS(op_name, op_type, dim, dtype) {                               \
-    vector_compare_vs_##dim##d<op_type, dtype>(src0, scalar, dst);             \
+    if (!is_memref_aligned_compare_vs_##dim##d<dtype>(                         \
+        src0, dst))[[unlikely]] {                                              \
+      scalar_compare_vs_##dim##d<op_type, dtype>(src0, scalar, dst);           \
+    } else {                                                                   \
+      vector_compare_vs_##dim##d<op_type, dtype>(src0, scalar, dst);           \
+    }                                                                          \
   }
 
 extern "C" {

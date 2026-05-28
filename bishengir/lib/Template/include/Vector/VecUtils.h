@@ -1477,6 +1477,31 @@ T handle_vector_operation(T src0_oprand, T src1_oprand, VectorLastAxisMode mode)
   }
 }
 
+// Read the i-th condition bit from a packed bitmask buffer.
+// COND_T can be bool (1 bit per element) or int8_t (8 bits per element).
+// For bool: bit position = offset + i * stride (each stride step is 1 bit).
+// For int8_t: bit position = offset * 8 + (i / 8) * stride * 8 + (i % 8)
+//   (stride is in bytes, so multiply by BITS_PER_BYTE to get bit-level stride).
+template <typename COND_T = bool>
+__aiv__ __attribute__((always_inline)) bool
+get_condition_bit(memref_t<__ubuf__ COND_T, 1> *condition, int64_t i) {
+  static_assert((std::is_same<COND_T, bool>::value ||
+                 std::is_same<COND_T, int8_t>::value),
+                "COND_T must be bool or int8");
+
+  __ubuf__ uint8_t *cond_byte_ptr = (__ubuf__ uint8_t *)(condition->aligned);
+  int64_t abs_bit_pos = 0;
+  if constexpr (std::is_same_v<COND_T, bool>) {
+    abs_bit_pos = condition->offset + i * condition->strides[0];
+  } else {
+    abs_bit_pos = condition->offset  * BITS_PER_BYTE +
+      (i / BITS_PER_BYTE) * (condition->strides[0]) * BITS_PER_BYTE + (i % BITS_PER_BYTE);
+  }
+  int64_t byte_pos = abs_bit_pos / BITS_PER_BYTE;
+  int64_t bit_in_byte = abs_bit_pos % BITS_PER_BYTE;
+  return (cond_byte_ptr[byte_pos] >> bit_in_byte) & 1;
+}
+
 extern "C" {
 //===-------------------------------------------------------------------===//
 // eltwise vv, 1 dim
