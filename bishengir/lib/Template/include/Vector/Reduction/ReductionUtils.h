@@ -1289,6 +1289,186 @@ isnan_value(T data) {
   return static_cast<float>(data) != static_cast<float>(data);
 }
 
+/// Dichotomy reduction on buffer (in-place).
+/// Reduces buffer[0..current_size-1] to buffer[0..half-1] by folding front/back halves.
+/// Returns the new size (current_size / 2).
+/// Template parameter BufPtr can be T* or __ubuf__ T*.
+template <ReduceOpTy OP, typename T, typename BufPtr>
+__aiv__ __attribute__((always_inline))
+int64_t dichotomy_reduce_buffer(BufPtr buffer, int64_t current_size) {
+  int64_t half = current_size / 2;
+  for (int64_t i = 0; i < half; ++i) {
+    buffer[i] = reduction_scalar_operation<OP, T>(buffer[i], buffer[i + half]);
+  }
+  return half;
+}
+
+/// Pairwise reduction on buffer (in-place).
+/// Reduces buffer[0..current_size-1] to buffer[0..half_size-1] by pairing adjacent elements.
+/// Returns the new size (ceil(current_size/2)).
+/// Template parameter BufPtr can be T* or __ubuf__ T*.
+template <ReduceOpTy OP, typename T, typename BufPtr>
+__aiv__ __attribute__((always_inline))
+int64_t pairwise_reduce_buffer(BufPtr buffer, int64_t current_size) {
+  int64_t half_size = (current_size + 1) / 2;
+  for (int64_t i = 0; i < half_size; ++i) {
+    if (2 * i + 1 < current_size) {
+      buffer[i] = reduction_scalar_operation<OP, T>(buffer[2 * i], buffer[2 * i + 1]);
+    } else {
+      buffer[i] = buffer[2 * i];
+    }
+  }
+  return half_size;
+}
+
+/// Pairwise reduction from source to buffer (first step).
+/// Reads pairs directly from src_ptr and stores to tmp_buffer.
+/// Returns the new size (ceil(n/2)).
+template <ReduceOpTy OP, typename T, typename BufPtr>
+__aiv__ __attribute__((always_inline))
+int64_t pairwise_reduce_from_src(__ubuf__ T *src_ptr, int64_t stride, int64_t n,
+                                  BufPtr tmp_buffer) {
+  int64_t half_size = (n + 1) / 2;
+  for (int64_t i = 0; i < half_size; ++i) {
+    tmp_buffer[i] = *(src_ptr + (2 * i) * stride);
+    if (2 * i + 1 < n) {
+      tmp_buffer[i] = reduction_scalar_operation<OP, T>(
+          tmp_buffer[i], *(src_ptr + (2 * i + 1) * stride));
+    }
+  }
+  return half_size;
+}
+
+/// Implements tree-based reduction to reduce to target_size elements.
+/// The result is stored in tmp_buffer[0..return_value-1], returns the final size after reduction.
+///
+/// IMPORTANT: target_size MUST be a power of 2 (including 1).
+///
+/// Template parameter BufPtr can be T* (stack buffer) or __ubuf__ T* (UB buffer).
+template <ReduceOpTy OP, typename T, typename BufPtr>
+__aiv__ __attribute__((always_inline))
+std::enable_if_t<(OP == ReduceOpTy::REDUCE_SUM || OP == ReduceOpTy::REDUCE_PROD), int64_t>
+scalar_reduce_dichotomy_to_target(__ubuf__ T *src_ptr, int64_t stride, int64_t n,
+                                   BufPtr tmp_buffer, int64_t target_size) {
+  const int64_t dichotomy_num = Log2(n);
+  const int64_t main_size = static_cast<int64_t>(1) << dichotomy_num;
+  const int64_t tail_size = n - main_size;
+
+  int64_t half = main_size / 2;
+  for (int64_t i = 0; i < half; ++i) {
+    T val0 = *(src_ptr + i * stride);
+    T val1 = *(src_ptr + (i + half) * stride);
+    tmp_buffer[i] = reduction_scalar_operation<OP, T>(val0, val1);
+  }
+
+  if (tail_size > 0) {
+    int64_t tail_loop_num = CEIL_DIV(tail_size, half);
+    for (int64_t loop = 0; loop < tail_loop_num; ++loop) {
+      int64_t tail_start = main_size + loop * half;
+      int64_t sub_tail_size = MIN(tail_size - loop * half, half);
+      for (int64_t i = 0; i < sub_tail_size; ++i) {
+        T tail_val = *(src_ptr + (tail_start + i) * stride);
+        tmp_buffer[i] = reduction_scalar_operation<OP, T>(tmp_buffer[i], tail_val);
+      }
+    }
+  }
+
+  int64_t current_size = half;
+  while (current_size > target_size) {
+    current_size = dichotomy_reduce_buffer<OP, T>(tmp_buffer, current_size);
+  }
+
+  return current_size;
+}
+
+/// Wrapper that reduces to a single element (target_size = 1).
+/// Template parameter BufPtr can be T* (stack buffer) or __ubuf__ T* (UB buffer).
+template <ReduceOpTy OP, typename T, typename BufPtr>
+__aiv__ __attribute__((always_inline))
+std::enable_if_t<(OP == ReduceOpTy::REDUCE_SUM || OP == ReduceOpTy::REDUCE_PROD), T>
+scalar_reduce_dichotomy(__ubuf__ T *src_ptr, int64_t stride, int64_t n,
+                         BufPtr tmp_buffer) {
+  scalar_reduce_dichotomy_to_target<OP, T>(src_ptr, stride, n, tmp_buffer, 1);
+  return tmp_buffer[0];
+}
+
+/// Reduces to single element using pairwise reduction for SUM (half/float).
+/// - If n <= num_per_repeat: directly pairwise reduce to 1
+/// - If n > num_per_repeat: first dichotomy to num_per_repeat, then pairwise to 1
+/// Template parameter BufPtr can be T* (stack buffer) or __ubuf__ T* (UB buffer).
+template <ReduceOpTy OP, typename T, typename BufPtr>
+__aiv__ __attribute__((always_inline))
+std::enable_if_t<(OP == ReduceOpTy::REDUCE_SUM), T>
+scalar_reduce_pairwise(__ubuf__ T *src_ptr, int64_t stride, int64_t n,
+                        BufPtr tmp_buffer) {
+  constexpr int num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
+  
+  if (n == 1) {
+    return *src_ptr;
+  }
+  
+  int64_t current_size;
+  if (n > num_per_repeat) {
+    current_size = scalar_reduce_dichotomy_to_target<OP, T>(
+        src_ptr, stride, n, tmp_buffer, num_per_repeat);
+  } else {
+    current_size = pairwise_reduce_from_src<OP, T>(src_ptr, stride, n, tmp_buffer);
+  }
+  
+  while (current_size > 1) {
+    current_size = pairwise_reduce_buffer<OP, T>(tmp_buffer, current_size);
+  }
+  
+  return tmp_buffer[0];
+}
+
+/// Block-wise reduction to num_per_repeat, then dichotomy to 1.
+/// - If n <= num_per_repeat: directly dichotomy reduce to 1
+/// - If n > num_per_repeat: first block-wise reduce to num_per_repeat, then dichotomy to 1
+template <ReduceOpTy OP, typename T>
+__aiv__ __attribute__((always_inline))
+std::enable_if_t<(OP == ReduceOpTy::REDUCE_SUM || OP == ReduceOpTy::REDUCE_PROD), T>
+scalar_reduce_two_phase(__ubuf__ T *src_ptr, int64_t stride, int64_t n,
+                        __ubuf__ T *tmp_buffer) {
+  constexpr int num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
+  
+  if (n == 1) {
+    return *src_ptr;
+  }
+  
+  if (n <= num_per_repeat) {
+    return scalar_reduce_dichotomy<OP, T, __ubuf__ T*>(src_ptr, stride, n, tmp_buffer);
+  }
+  
+  int64_t num_chunks = n / num_per_repeat;
+  int64_t tail_size = n % num_per_repeat;
+  
+  for (int64_t i = 0; i < num_per_repeat; ++i) {
+    tmp_buffer[i] = *(src_ptr + i * stride);
+  }
+  
+  for (int64_t chunk = 1; chunk < num_chunks; ++chunk) {
+    for (int64_t i = 0; i < num_per_repeat; ++i) {
+      T val = *(src_ptr + (chunk * num_per_repeat + i) * stride);
+      tmp_buffer[i] = reduction_scalar_operation<OP, T>(tmp_buffer[i], val);
+    }
+  }
+  
+  if (tail_size > 0) {
+    for (int64_t i = 0; i < tail_size; ++i) {
+      T val = *(src_ptr + (num_chunks * num_per_repeat + i) * stride);
+      tmp_buffer[i] = reduction_scalar_operation<OP, T>(tmp_buffer[i], val);
+    }
+  }
+  
+  int64_t current_size = num_per_repeat;
+  while (current_size > 1) {
+    current_size = dichotomy_reduce_buffer<OP, T>(tmp_buffer, current_size);
+  }
+  
+  return tmp_buffer[0];
+}
+
 extern "C" {
 //===-------------------------------------------------------------------===//
 // reduce ar, 2 dim
