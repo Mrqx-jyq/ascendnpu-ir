@@ -836,10 +836,11 @@ public:
 /// Vadd is inserted to different position (after ConvOps + vcast or directly
 /// after ConvOps) according to different dtype
 template <typename TargetType, typename ConvOpType>
-struct DecomposeConv1dWithBiasPattern : public OpRewritePattern<ConvOpType> {
+struct DecomposeConvResultWithBiasPattern
+    : public OpRewritePattern<ConvOpType> {
 public:
   using OpRewritePattern<ConvOpType>::OpRewritePattern;
-  ~DecomposeConv1dWithBiasPattern() override = default;
+  ~DecomposeConvResultWithBiasPattern() override = default;
 
   LogicalResult matchAndRewrite(ConvOpType op,
                                 PatternRewriter &rewriter) const override {
@@ -855,6 +856,9 @@ public:
 
     auto biasType = dyn_cast<RankedTensorType>(bias.getType());
     if (!biasType) {
+      return failure();
+    }
+    if (biasType.getRank() != 1) {
       return failure();
     }
 
@@ -891,6 +895,7 @@ public:
     auto elemType = resultType.getElementType();
     SmallVector<int64_t> shape(resultType.getShape().begin(),
                                resultType.getShape().end());
+    bool hasBatch = rank == expectedMaxRank;
 
     auto convNoBiasInit =
         rewriter.create<tensor::EmptyOp>(loc, shape, elemType);
@@ -908,6 +913,34 @@ public:
         );
 
     Value convResult = newConv.getResultTensors()[0];
+    SmallVector<int64_t> vaddShape(shape.begin(), shape.end());
+    Value vaddInput = convResult;
+
+    if constexpr (baseDims == 3) {
+      auto getCollapsedDim = [](int64_t lhs, int64_t rhs) {
+        if (lhs == ShapedType::kDynamic || rhs == ShapedType::kDynamic) {
+          return ShapedType::kDynamic;
+        }
+        return lhs * rhs;
+      };
+
+      if (hasBatch) {
+        // [N, oC, oH, oW] -> [N, oC, oHW]
+        vaddShape = {shape[0], shape[1], getCollapsedDim(shape[2], shape[3])};
+        SmallVector<ReassociationIndices> reassoc = {{0}, {1}, {2, 3}};
+        auto collapsedType = RankedTensorType::get(vaddShape, elemType);
+        vaddInput = rewriter.create<tensor::CollapseShapeOp>(
+            loc, collapsedType, convResult, reassoc);
+      } else {
+        // [oC, oH, oW] -> [oC, oHW]
+        vaddShape = {shape[0], getCollapsedDim(shape[1], shape[2])};
+        SmallVector<ReassociationIndices> reassoc = {{0}, {1, 2}};
+        auto collapsedType = RankedTensorType::get(vaddShape, elemType);
+        vaddInput = rewriter.create<tensor::CollapseShapeOp>(
+            loc, collapsedType, convResult, reassoc);
+      }
+    }
+    int64_t vaddRank = static_cast<int64_t>(vaddShape.size());
 
     // Output channel dimension position depends on rank
     // For rank = baseDims: format is oCxSpatial (no batch)
@@ -918,30 +951,32 @@ public:
     SmallVector<int64_t> expandedShape;
     SmallVector<SmallVector<int64_t, 2>> reassoc;
 
-    if (rank == baseDims) {
-      // No batch dimension: [oC, spatial_dims...]
-      // For 1D: expandedShape = {oC, 1}, reassoc = {{0, 1}}
-      // For 2D: expandedShape = {oC, 1, 1}, reassoc = {{0, 1, 2}}
+    if (!hasBatch) {
+      // No batch dimension: [oC, spatial_dims...].
+      // For 1D: expandedShape = {oC, 1}, reassoc = {{0, 1}}.
+      // For 2D, spatial dims have already been fused to oHW before the bias
+      // add: expandedShape = {oC, 1}, reassoc = {{0, 1}}.
       expandedShape.push_back(oC);
-      for (int64_t i = 0; i < baseDims - 1; i++) {
+      for (int64_t i = 0; i < vaddRank - 1; i++) {
         expandedShape.push_back(1);
       }
       SmallVector<int64_t, 2> reassocIndices;
-      for (int64_t i = 0; i <= baseDims - 1; i++) {
+      for (int64_t i = 0; i < vaddRank; i++) {
         reassocIndices.push_back(i);
       }
       reassoc.push_back(reassocIndices);
     } else {
-      // With batch dimension: [N, oC, spatial_dims...]
-      // For 1D: expandedShape = {1, oC, 1}, reassoc = {{0, 1, 2}}
-      // For 2D: expandedShape = {1, oC, 1, 1}, reassoc = {{0, 1, 2, 3}}
+      // With batch dimension: [N, oC, spatial_dims...].
+      // For 1D: expandedShape = {1, oC, 1}, reassoc = {{0, 1, 2}}.
+      // For 2D, spatial dims have already been fused to oHW before the bias
+      // add: expandedShape = {1, oC, 1}, reassoc = {{0, 1, 2}}.
       expandedShape.push_back(1);
       expandedShape.push_back(oC);
-      for (int64_t i = 0; i < baseDims - 1; i++) {
+      for (int64_t i = 0; i < vaddRank - 2; i++) {
         expandedShape.push_back(1);
       }
       SmallVector<int64_t, 2> reassocIndices;
-      for (int64_t i = 0; i <= baseDims; i++) {
+      for (int64_t i = 0; i < vaddRank; i++) {
         reassocIndices.push_back(i);
       }
       reassoc.push_back(reassocIndices);
@@ -960,19 +995,21 @@ public:
     }
 
     SmallVector<int64_t> broadcastDims;
-    if (rank == baseDims) {
-      // No batch: broadcast over all spatial dimensions
-      // For 1D: broadcastDims = {1}
-      // For 2D: broadcastDims = {1, 2}
-      for (int64_t i = 1; i <= baseDims - 1; i++) {
+    if (!hasBatch) {
+      // No batch dimension: [oC, spatial_dims...].
+      // For 1D: broadcastDims = {1}.
+      // For 2D, spatial dims have already been fused to oHW before the bias
+      // add: broadcastDims = {1}.
+      for (int64_t i = 1; i < vaddRank; i++) {
         broadcastDims.push_back(i); // spatial dimensions
       }
     } else {
-      // With batch: broadcast over batch and spatial dimensions
-      // For 1D: broadcastDims = {0, 2}
-      // For 2D: broadcastDims = {0, 2, 3}
+      // With batch dimension: [N, oC, spatial_dims...].
+      // For 1D: broadcastDims = {0, 2}.
+      // For 2D, spatial dims have already been fused to oHW before the bias
+      // add: broadcastDims = {0, 2}.
       broadcastDims.push_back(0); // batch dimension
-      for (int64_t i = 2; i <= baseDims; i++) {
+      for (int64_t i = 2; i < vaddRank; i++) {
         broadcastDims.push_back(i); // spatial dimensions
       }
     }
@@ -980,14 +1017,28 @@ public:
     auto broadcastAttr = rewriter.getDenseI64ArrayAttr(broadcastDims);
 
     auto vaddInit =
-        rewriter.create<tensor::EmptyOp>(loc, shape, convResultElemType);
+        rewriter.create<tensor::EmptyOp>(loc, vaddShape, convResultElemType);
 
     auto vadd = rewriter.create<hivm::VAddOp>(
-        loc, TypeRange{vaddInit.getType()},
-        ValueRange{convResult, expandedBias}, ValueRange{vaddInit}, Value(),
-        nullptr, broadcastAttr);
+        loc, TypeRange{vaddInit.getType()}, ValueRange{vaddInput, expandedBias},
+        ValueRange{vaddInit}, Value(), nullptr, broadcastAttr);
 
-    rewriter.replaceOp(op, vadd->getResult(0));
+    Value result = vadd->getResult(0);
+    if constexpr (baseDims == 3) {
+      auto expandedResultType =
+          RankedTensorType::get(shape, convResultElemType);
+      if (hasBatch) {
+        SmallVector<ReassociationIndices> reassoc = {{0}, {1}, {2, 3}};
+        result = rewriter.create<tensor::ExpandShapeOp>(loc, expandedResultType,
+                                                        result, reassoc);
+      } else {
+        SmallVector<ReassociationIndices> reassoc = {{0}, {1, 2}};
+        result = rewriter.create<tensor::ExpandShapeOp>(loc, expandedResultType,
+                                                        result, reassoc);
+      }
+    }
+
+    rewriter.replaceOp(op, result);
     return success();
   }
 };
@@ -1315,27 +1366,30 @@ public:
       newResult = extractSliceOp.getResult();
     }
 
-    // === batch reshape and oHW split ===
-    if (baseDims == 2) {
-      if (hasBatch) {
-        auto finalType = RankedTensorType::get({batch, oC, oHW}, newTargetType);
+    // === batch reshape ===
+    if (hasBatch) {
+      auto batchReshapedType =
+          RankedTensorType::get({batch, oC, oHW}, newTargetType);
 
-        SmallVector<ReassociationIndices> reassoc = {
-            {0, 1}, // B * oC
-            {2}     // oHW
-        };
+      SmallVector<ReassociationIndices> reassoc = {
+          {0, 1}, // B * oC
+          {2}     // oHW
+      };
 
-        newResult = rewriter.create<tensor::ExpandShapeOp>(loc, finalType,
-                                                           newResult, reassoc);
-      }
-    } else if (baseDims == 3) {
+      newResult = rewriter.create<tensor::ExpandShapeOp>(loc, batchReshapedType,
+                                                         newResult, reassoc);
+    }
+
+    // === oHW split ===
+    if (baseDims == 3) {
       if (hasBatch) {
         auto finalType =
             RankedTensorType::get({batch, oC, oH, oW}, newTargetType);
 
         SmallVector<ReassociationIndices> reassoc = {
-            {0, 1}, // B * oC
-            {2, 3}  // oH * oW
+            {0},   // B
+            {1},   // oC
+            {2, 3} // oH * oW
         };
 
         newResult = rewriter.create<tensor::ExpandShapeOp>(loc, finalType,
@@ -1351,8 +1405,6 @@ public:
         newResult = rewriter.create<tensor::ExpandShapeOp>(loc, finalType,
                                                            newResult, reassoc);
       }
-    } else {
-      return failure();
     }
 
     rewriter.replaceOp(target.getDefiningOp(), newResult);
@@ -1366,9 +1418,9 @@ void populateNormalizeConvOpsPattern1(RewritePatternSet &patterns) {
       patterns.getContext());
   patterns.add<NormalizeConvResultTypePattern<BFloat16Type, hivm::Conv2DL1Op>>(
       patterns.getContext());
-  patterns.add<DecomposeConv1dWithBiasPattern<Float16Type, hivm::Conv1DL1Op>>(
+  patterns.add<DecomposeConvResultWithBiasPattern<Float16Type, hivm::Conv1DL1Op>>(
       patterns.getContext());
-  patterns.add<DecomposeConv1dWithBiasPattern<Float16Type, hivm::Conv2DL1Op>>(
+  patterns.add<DecomposeConvResultWithBiasPattern<Float16Type, hivm::Conv2DL1Op>>(
       patterns.getContext());
 }
 
@@ -1377,9 +1429,9 @@ void populateNormalizeConvOpsPattern2(RewritePatternSet &patterns) {
       patterns.getContext());
   patterns.add<NormalizeConvResultTypePattern<Float16Type, hivm::Conv2DL1Op>>(
       patterns.getContext());
-  patterns.add<DecomposeConv1dWithBiasPattern<Float32Type, hivm::Conv1DL1Op>>(
+  patterns.add<DecomposeConvResultWithBiasPattern<Float32Type, hivm::Conv1DL1Op>>(
       patterns.getContext());
-  patterns.add<DecomposeConv1dWithBiasPattern<Float32Type, hivm::Conv2DL1Op>>(
+  patterns.add<DecomposeConvResultWithBiasPattern<Float32Type, hivm::Conv2DL1Op>>(
       patterns.getContext());
 }
 
