@@ -30,6 +30,12 @@
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/KernelInfoCollector.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/PureElemwiseSchedule.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/ShallowCVSchedule.h"
+// 添加
+#include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/ShallowVVSchedule.h"
+#include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/MixCVSchedule.h"
+#include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/MixC2Schedule.h"
+//
+
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/SingleCubeSchedule.h"
 #include "bishengir/Dialect/HFusion/Transforms/CacheFuncIO.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
@@ -56,6 +62,7 @@
 #include "llvm/Support/Debug.h"
 
 #include "AutoScheduleAttrDefs.h"
+
 
 #define DEBUG_TYPE "hfusion-auto-schedule"
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] [Base Scheduler] ")
@@ -602,7 +609,17 @@ LogicalResult SchedulerBase::applySchedule(func::FuncOp &funcOp,
     scheduler = std::make_unique<ShallowCVScheduler>(funcOp);
     break;
   case FusionKind::ShallowVV:
-    return success();
+    // return success();
+    // 添加
+    scheduler = std::make_unique<ShallowVVScheduler>(funcOp);
+    break;
+  case FusionKind::MixCV:
+    scheduler = std::make_unique<MixCVScheduler>(funcOp);
+    break;
+  case FusionKind::MixC2:
+    scheduler = std::make_unique<MixC2Scheduler>(funcOp);
+    break;
+    //
   case FusionKind::Unknown:
   default:
     return funcOp.emitError("Unknown kernel fusion kind");
