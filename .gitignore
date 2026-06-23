@@ -38,3 +38,9 @@ Thumbs.db
 build/
 submission.zip
 submit_final/
+build/
+*.zip
+*.rar
+submit_final/
+submission/
+CMakeLists.txt.origin
