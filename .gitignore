@@ -50,3 +50,9 @@ build/
 submit_final/
 submission/
 CMakeLists.txt.origin
+build/
+*.zip
+*.rar
+submit_final/
+submission/
+CMakeLists.txt.origin
