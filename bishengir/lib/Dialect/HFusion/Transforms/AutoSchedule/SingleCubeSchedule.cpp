@@ -45,10 +45,19 @@ namespace {
 static constexpr int64_t kL0CSizeInBytes = 128 * 1024;
 static constexpr int64_t kL1SizeInBytes = 512 * 1024;
 
-/// Tiling Key
-static constexpr int64_t kTilingCaseKeysAttched[1] = {
-    /* kTilingCaseKeyBm128n256k256 */
-    300,
+// /// Tiling Key
+// static constexpr int64_t kTilingCaseKeysAttched[1] = {
+//     /* kTilingCaseKeyBm128n256k256 */
+//     300,
+// };
+/// Tiling Keys for different matrix shape categories.
+/// Key 300: General purpose (balanced, M~128, N~256, K~256)
+/// Key 301: Small M shapes (batch <= 128) - smaller blocks for better utilization
+/// Key 302: Large matrices (M,N >= 256) - larger blocks for throughput
+/// Key 303: Small N shapes (N <= 128) - narrow matrix optimization
+/// Key 304: Tiny shapes (M,N < 64) - latency-sensitive, minimal blocks
+static constexpr int64_t kTilingCaseKeysAttched[] = {
+    300, 301, 302, 303, 304,
 };
 
 struct BlockShapeTilingData {
@@ -89,10 +98,28 @@ struct SingleCubeTilingConfig {
   EpilogueTilingData epilogue;
 };
 
-/// Tiling Struct Default configs
-static constexpr SingleCubeTilingConfig kSingleCubeDefaultTilingInfo[1] = {
-    /* kTilingCaseKeyBm128n256k256 */
-    {{128, 256, 256}, {128, 256, 64}, {1}, {0, 3}, {0}, {4}}};
+// /// Tiling Struct Default configs
+// static constexpr SingleCubeTilingConfig kSingleCubeDefaultTilingInfo[1] = {
+//     /* kTilingCaseKeyBm128n256k256 */
+//     {{128, 256, 256}, {128, 256, 64}, {1}, {0, 3}, {0}, {4}}};
+
+/// Tiling Struct Default configs for different matrix shape categories.
+/// Format: BlockShape{M,N,K}, ProcessShape{M,N,K}, SplitK, Swizzle{dir,off}, ShuffleKType, EpilogueTile
+/// L0C constraint: BlockM * BlockN * sizeof(fp16) <= 128KB (131072 bytes)
+/// L1  constraint: (BlockM * BlockN + BlockK * BlockN) * 2 <= 512KB (524288 bytes)
+static constexpr SingleCubeTilingConfig kSingleCubeDefaultTilingInfo[] = {
+    /* Key 300: general purpose */
+    {{128, 256, 256}, {128, 256, 64}, {1}, {0, 3}, {0}, {4}},
+    /* Key 301: small M (batch <= 128) */
+    {{64, 256, 256}, {64, 256, 64}, {1}, {0, 3}, {0}, {4}},
+    /* Key 302: large square (M,N >= 256) */
+    {{256, 256, 256}, {256, 256, 64}, {1}, {0, 3}, {0}, {4}},
+    /* Key 303: small N (N <= 128) */
+    {{128, 128, 256}, {128, 128, 128}, {1}, {0, 3}, {0}, {4}},
+    /* Key 304: tiny shapes (M,N < 64) */
+    {{32, 64, 128}, {32, 64, 64}, {1}, {0, 3}, {0}, {4}},
+};
+
 } // namespace
 
 //===----------------------------------------------------------------------===//
@@ -139,8 +166,35 @@ TilingComputeFn SingleCubeScheduler::calculateTilingImpl() {
       Expr c1 = opBuilder->createConstExpr(1);
       Expr c128 = opBuilder->createConstExpr(128);
       Expr c256 = opBuilder->createConstExpr(256);
-      Expr tilingKeyExpr = opBuilder->createConstExpr(tilingKey);
+      // Expr tilingKeyExpr = opBuilder->createConstExpr(tilingKey);
+      // Expr blockTileM = opBuilder->createConstExpr(tilingConfig.block.m);
+
+      // Shape-adaptive tiling key selection: choose best config based on M,N dims
+      Expr c64 = opBuilder->createConstExpr(64);
+      Expr c128_s = opBuilder->createConstExpr(128);
+      Expr c256_s = opBuilder->createConstExpr(256);
+      Expr c512_s = opBuilder->createConstExpr(512);
+
+      Expr key300_v = opBuilder->createConstExpr(300LL);
+      Expr key301_v = opBuilder->createConstExpr(301LL);
+      Expr key302_v = opBuilder->createConstExpr(302LL);
+      Expr key303_v = opBuilder->createConstExpr(303LL);
+      Expr key304_v = opBuilder->createConstExpr(304LL);
+
+      // Heuristic chain (evaluated at runtime via dynamic tiling):
+      //   tiny(M<64 & N<64) -> 304, smallM(M<=128) -> 301, smallN(N<=128) -> 303,
+      //   large(M>=512 & N>=512) -> 302, default -> 300
+      Expr isTiny = select(lengthM < c64, lengthN < c64, c0);
+      Expr isSmallM = lengthM <= c128_s;
+      Expr isSmallN = lengthN <= c128_s;
+      Expr isLarge = select(lengthM >= c512_s, lengthN >= c512_s, c0);
+
+      Expr tilingKeyExpr = select(isTiny, key304_v,
+                            select(isSmallM, key301_v,
+                            select(isSmallN, key303_v,
+                            select(isLarge, key302_v, key300_v))));
       Expr blockTileM = opBuilder->createConstExpr(tilingConfig.block.m);
+      
       Expr blockTileN = opBuilder->createConstExpr(tilingConfig.block.n);
       if (!matmulOpInfo.transposeA && matmulOpInfo.transposeB) {
         blockTileM = select(lengthM <= c256, c128,
