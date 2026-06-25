@@ -1,5 +1,5 @@
 if(NOT BISHENGIR_BUILD_STANDALONE_IR_ONLY)
-  list(APPEND BS_FEAT_LINK_LIBS BiShengIRLinalgCanonicalizations)
+  list(APPEND BS_FEAT_LINK_LIBS BiShengIRLinalgDialectExt)
 endif()
 
 add_bishengir_library(BiShengIRDialectUtils
