@@ -28,14 +28,11 @@
 #include "bishengir/Dialect/HFusion/TransformOps/HFusionTransformOps.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/AnyPBRSchedule.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/KernelInfoCollector.h"
+#include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/MixC2Schedule.h"
+#include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/MixCVSchedule.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/PureElemwiseSchedule.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/ShallowCVSchedule.h"
-// 添加
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/ShallowVVSchedule.h"
-#include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/MixCVSchedule.h"
-#include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/MixC2Schedule.h"
-//
-
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/SingleCubeSchedule.h"
 #include "bishengir/Dialect/HFusion/Transforms/CacheFuncIO.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
@@ -609,8 +606,6 @@ LogicalResult SchedulerBase::applySchedule(func::FuncOp &funcOp,
     scheduler = std::make_unique<ShallowCVScheduler>(funcOp);
     break;
   case FusionKind::ShallowVV:
-    // return success();
-    // 添加
     scheduler = std::make_unique<ShallowVVScheduler>(funcOp);
     break;
   case FusionKind::MixCV:
@@ -619,7 +614,6 @@ LogicalResult SchedulerBase::applySchedule(func::FuncOp &funcOp,
   case FusionKind::MixC2:
     scheduler = std::make_unique<MixC2Scheduler>(funcOp);
     break;
-    //
   case FusionKind::Unknown:
   default:
     return funcOp.emitError("Unknown kernel fusion kind");
@@ -1239,10 +1233,10 @@ void AutoSchedulePass::setOptionsForFunc(AutoScheduleOptions &options,
   // For cube and mix fusion kind, the block dim is set to half because cube
   // and vector is 1:2 for now.
   if (maybeFusionKind.has_value() &&
-    ((*maybeFusionKind) == FusionKind::MixCV ||
-     (*maybeFusionKind) == FusionKind::SingleCube ||
-     (*maybeFusionKind) == FusionKind::MixC2 ||          // ← 加上这行
-     (*maybeFusionKind) == FusionKind::ShallowCV)) {
+      ((*maybeFusionKind) == FusionKind::MixCV ||
+       (*maybeFusionKind) == FusionKind::SingleCube ||
+       (*maybeFusionKind) == FusionKind::MixC2 ||
+       (*maybeFusionKind) == FusionKind::ShallowCV)) {
     options.blockDim = std::max(this->blockDim / 2, (unsigned int)1);
   } else {
     options.blockDim = this->blockDim;
