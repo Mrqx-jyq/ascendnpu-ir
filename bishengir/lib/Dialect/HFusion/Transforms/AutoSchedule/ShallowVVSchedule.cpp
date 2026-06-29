@@ -36,6 +36,16 @@ using namespace mlir::hfusion;
 LogicalResult ShallowVVScheduler::runOnOperation(OpBuilder &opBuilder) {
   func::FuncOp shallowVVFunc = getOriginalKernel();
 
+  bool isOutlinedWrapper = true;
+  for (Operation &op : shallowVVFunc.front().without_terminator()) {
+    if (!isa<func::CallOp>(op)) {
+      isOutlinedWrapper = false;
+      break;
+    }
+  }
+  if (isOutlinedWrapper)
+    return success();
+
   // Step 1: Apply PureElemwise opfusion within the ShallowVV kernel.
   HFusionOpFusionOptions options;
   options.fusionMode = FusionKind::PureElemwise;
