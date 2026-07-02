@@ -232,6 +232,19 @@ SchedulerBase::~SchedulerBase() {
   handleRecord_.reset();
 }
 
+bool SchedulerBase::isOutlinedWrapper(func::FuncOp funcOp) {
+  if (funcOp.isDeclaration() || funcOp.getBody().empty())
+    return false;
+
+  bool hasCall = false;
+  for (Operation &op : funcOp.front().without_terminator()) {
+    if (!isa<func::CallOp>(op))
+      return false;
+    hasCall = true;
+  }
+  return hasCall;
+}
+
 LogicalResult SchedulerBase::runPreScheduleProcedure(OpBuilder &opBuilder) {
   func::FuncOp currentFunc = getOriginalKernel();
   if (failed(cacheIO(opBuilder)))

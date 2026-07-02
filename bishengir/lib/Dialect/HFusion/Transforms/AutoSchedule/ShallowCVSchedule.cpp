@@ -39,6 +39,9 @@ using namespace mlir::hfusion;
 
 LogicalResult ShallowCVScheduler::runOnOperation(OpBuilder &opBuilder) {
   func::FuncOp shallowCVFunc = getOriginalKernel();
+  if (isOutlinedWrapper(shallowCVFunc))
+    return success();
+
   // Step 1: Apply LastAxsiPBR opfusion
   HFusionOpFusionOptions options;
   options.fusionMode = FusionKind::LastAxisPBR;

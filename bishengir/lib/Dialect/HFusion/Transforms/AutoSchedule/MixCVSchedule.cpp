@@ -35,6 +35,8 @@ using namespace mlir::hfusion;
 
 LogicalResult MixCVScheduler::runOnOperation(OpBuilder &opBuilder) {
   func::FuncOp mixCVFunc = getOriginalKernel();
+  if (isOutlinedWrapper(mixCVFunc))
+    return success();
 
   // Step 1: Apply LastAxisPBR opfusion within the MixCV kernel.
   // MixCV contains matmul (Cube) + elemwise/transpose/reduce (Vector) ops.

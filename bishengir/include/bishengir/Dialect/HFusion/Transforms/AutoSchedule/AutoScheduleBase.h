@@ -223,6 +223,9 @@ protected:
   using OperationIdentifier = detail::OperationIdentifier;
   using AttributeIdentifier = detail::AttributeIdentifier;
 
+  /// Return true when op fusion has already reduced the function to calls.
+  static bool isOutlinedWrapper(func::FuncOp funcOp);
+
   /// Implementation of kernel analysis and verification.
   virtual LogicalResult analyzeAndVerifyKernelImpl();
 

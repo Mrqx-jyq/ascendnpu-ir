@@ -40,3 +40,31 @@ module {
     return %0#0, %0#1 : tensor<7xf16>, tensor<7x1xf16>
   }
 }
+
+// -----
+
+module {
+  // CHECK-LABEL: func.func @outlined_kernel
+  func.func private @outlined_kernel(%arg0: tensor<16xf16>) -> tensor<16xf16> attributes {hacc.function_kind = #hacc.function_kind<DEVICE>}
+
+  // CHECK-LABEL: func.func @shallow_cv_wrapper
+  // CHECK: call @outlined_kernel
+  func.func @shallow_cv_wrapper(%arg0: tensor<16xf16>) -> tensor<16xf16> attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<SHALLOW_CV>} {
+    %0 = call @outlined_kernel(%arg0) : (tensor<16xf16>) -> tensor<16xf16>
+    return %0 : tensor<16xf16>
+  }
+
+  // CHECK-LABEL: func.func @mix_cv_wrapper
+  // CHECK: call @outlined_kernel
+  func.func @mix_cv_wrapper(%arg0: tensor<16xf16>) -> tensor<16xf16> attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<MIX_CV>} {
+    %0 = call @outlined_kernel(%arg0) : (tensor<16xf16>) -> tensor<16xf16>
+    return %0 : tensor<16xf16>
+  }
+
+  // CHECK-LABEL: func.func @mix_c2_wrapper
+  // CHECK: call @outlined_kernel
+  func.func @mix_c2_wrapper(%arg0: tensor<16xf16>) -> tensor<16xf16> attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<MIX_C2>} {
+    %0 = call @outlined_kernel(%arg0) : (tensor<16xf16>) -> tensor<16xf16>
+    return %0 : tensor<16xf16>
+  }
+}

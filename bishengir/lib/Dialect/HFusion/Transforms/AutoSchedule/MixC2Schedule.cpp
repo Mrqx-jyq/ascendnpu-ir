@@ -30,6 +30,8 @@ using namespace mlir::hfusion;
 
 LogicalResult MixC2Scheduler::runOnOperation(OpBuilder &opBuilder) {
   func::FuncOp mixC2Func = getOriginalKernel();
+  if (isOutlinedWrapper(mixC2Func))
+    return success();
 
   HFusionOpFusionOptions options;
   options.fusionMode = FusionKind::LastAxisPBR;
