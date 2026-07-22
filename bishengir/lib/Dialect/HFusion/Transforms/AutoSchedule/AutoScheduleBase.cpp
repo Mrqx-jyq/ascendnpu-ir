@@ -50,6 +50,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/Transforms/Transforms.h"
 #include "mlir/Dialect/Transform/IR/TransformOps.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/Passes.h"
@@ -238,8 +239,17 @@ bool SchedulerBase::isOutlinedWrapper(func::FuncOp funcOp) {
 
   bool hasCall = false;
   for (Operation &op : funcOp.front().without_terminator()) {
-    if (!isa<func::CallOp>(op))
+    auto callOp = dyn_cast<func::CallOp>(op);
+    if (!callOp)
       return false;
+
+    auto callee = dyn_cast_or_null<func::FuncOp>(
+        SymbolTable::lookupNearestSymbolFrom(funcOp, callOp.getCalleeAttr()));
+    auto calleeFusionKind = callee ? hfusion::tryGetFusionKind(callee)
+                                   : std::nullopt;
+    if (!calleeFusionKind || *calleeFusionKind == FusionKind::Unknown)
+      return false;
+
     hasCall = true;
   }
   return hasCall;

@@ -44,27 +44,31 @@ module {
 // -----
 
 module {
-  // CHECK-LABEL: func.func @outlined_kernel
-  func.func private @outlined_kernel(%arg0: tensor<16xf16>) -> tensor<16xf16> attributes {hacc.function_kind = #hacc.function_kind<DEVICE>}
+  // A call-only function is not necessarily an outlined wrapper. When the
+  // callee has no fusion kind, the function must still enter scheduling.
+  func.func private @external_helper(%arg0: tensor<16xf16>) -> tensor<16xf16> attributes {hacc.function_kind = #hacc.function_kind<DEVICE>}
 
   // CHECK-LABEL: func.func @shallow_cv_wrapper
-  // CHECK: call @outlined_kernel
+  // CHECK-SAME: attributes {enable_auto_mark_buffer_size
+  // CHECK: call @external_helper
   func.func @shallow_cv_wrapper(%arg0: tensor<16xf16>) -> tensor<16xf16> attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<SHALLOW_CV>} {
-    %0 = call @outlined_kernel(%arg0) : (tensor<16xf16>) -> tensor<16xf16>
+    %0 = call @external_helper(%arg0) : (tensor<16xf16>) -> tensor<16xf16>
     return %0 : tensor<16xf16>
   }
 
   // CHECK-LABEL: func.func @mix_cv_wrapper
-  // CHECK: call @outlined_kernel
+  // CHECK-SAME: attributes {enable_auto_mark_buffer_size
+  // CHECK: call @external_helper
   func.func @mix_cv_wrapper(%arg0: tensor<16xf16>) -> tensor<16xf16> attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<MIX_CV>} {
-    %0 = call @outlined_kernel(%arg0) : (tensor<16xf16>) -> tensor<16xf16>
+    %0 = call @external_helper(%arg0) : (tensor<16xf16>) -> tensor<16xf16>
     return %0 : tensor<16xf16>
   }
 
   // CHECK-LABEL: func.func @mix_c2_wrapper
-  // CHECK: call @outlined_kernel
+  // CHECK-SAME: attributes {enable_auto_mark_buffer_size
+  // CHECK: call @external_helper
   func.func @mix_c2_wrapper(%arg0: tensor<16xf16>) -> tensor<16xf16> attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<MIX_C2>} {
-    %0 = call @outlined_kernel(%arg0) : (tensor<16xf16>) -> tensor<16xf16>
+    %0 = call @external_helper(%arg0) : (tensor<16xf16>) -> tensor<16xf16>
     return %0 : tensor<16xf16>
   }
 }
