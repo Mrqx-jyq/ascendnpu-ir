@@ -158,8 +158,6 @@ TilingComputeFn SingleCubeScheduler::calculateTilingImpl() {
       Expr c128_s = opBuilder->createConstExpr(128);
       Expr c256_s = opBuilder->createConstExpr(256);
       Expr c512_s = opBuilder->createConstExpr(512);
-      Expr c2048 = opBuilder->createConstExpr(2048);
-
       Expr key300_v = opBuilder->createConstExpr(300LL);
       Expr key301_v = opBuilder->createConstExpr(301LL);
       Expr key302_v = opBuilder->createConstExpr(302LL);
@@ -216,14 +214,8 @@ TilingComputeFn SingleCubeScheduler::calculateTilingImpl() {
       Expr processTileM = opBuilder->createConstExpr(tilingConfig.process.m);
       Expr processTileN = opBuilder->createConstExpr(tilingConfig.process.n);
       Expr processTileK = opBuilder->createConstExpr(tilingConfig.process.k);
-      // Adaptive Split-K: enable multi-core K-dimension parallelism for large K.
-      // K >= 2048: splitK=4  (4-core K-parallel)
-      // K >= 512:  splitK=2  (2-core K-parallel)
-      // K <  512:  splitK=1  (single-core, no K-split overhead)
-      Expr c2_expr = opBuilder->createConstExpr(2);
-      Expr c4_expr = opBuilder->createConstExpr(4);
-      Expr splitKSlices = select(lengthK >= c2048, c4_expr,
-                            select(lengthK >= c512_s, c2_expr, c1));
+      Expr splitKSlices =
+          opBuilder->createConstExpr(tilingConfig.splitKSlices.k);
       Expr shuffleKType =
           opBuilder->createConstExpr(tilingConfig.shuffleKType.type);
       // Adaptive swizzle: direction and offset based on matrix shape ratio.
