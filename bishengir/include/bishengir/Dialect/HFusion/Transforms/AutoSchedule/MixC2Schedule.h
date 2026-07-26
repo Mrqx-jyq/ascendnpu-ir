@@ -1,4 +1,4 @@
-//===- MixC2Schedule.h -- Schedule for MixC2 Op ---------------*- C++ -*-===//
+﻿//===- MixC2Schedule.h - MixC2 Auto Schedule -------------------*- C++ -*-===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,26 +14,25 @@
 // limitations under the License.
 //
 //===----------------------------------------------------------------------===//
+//
+// This file declares auto schedule policy for MixC2 kernels.
+//
+//===----------------------------------------------------------------------===//
+
 #ifndef BISHENGIR_DIALECT_HFUSION_TRANSFORMS_AUTOSCHEDULE_MIXC2SCHEDULE_H
 #define BISHENGIR_DIALECT_HFUSION_TRANSFORMS_AUTOSCHEDULE_MIXC2SCHEDULE_H
 
-#include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/AutoScheduleBase.h"
-#include "bishengir/Dialect/HFusion/Transforms/Passes.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Support/LLVM.h"
 
 namespace mlir {
-class Location;
-class OpBuilder;
-namespace transform { class NamedSequenceOp; }
 namespace hfusion {
 
 class MixC2Scheduler : public SchedulerBase {
 public:
-  explicit MixC2Scheduler(func::FuncOp funcOpIn)
-      : SchedulerBase(funcOpIn, FusionKind::MixC2){};
+  using SchedulerBase::SchedulerBase;
   LogicalResult runOnOperation(OpBuilder &opBuilder) override;
+
+protected:
   LogicalResult analyzeAndVerifyKernelImpl() override { return success(); }
   TilingComputeFn calculateTilingImpl() override { return nullptr; };
   LogicalResult createScheduleImpl(TilingKey key,
@@ -44,5 +43,4 @@ public:
 
 } // namespace hfusion
 } // namespace mlir
-
 #endif

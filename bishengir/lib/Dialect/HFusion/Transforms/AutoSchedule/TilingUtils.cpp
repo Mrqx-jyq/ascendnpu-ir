@@ -99,6 +99,25 @@ Expr Expr::operator-(const Expr &other) {
       ExprKind::kRegular, builder_);
 }
 
+Expr Expr::ceilDiv(uint64_t cst) {
+  MLIRContext *ctx = getContext();
+  AffineExpr lhs = getAffineSymbolExpr(0, ctx);
+  AffineExpr rhs = getAffineConstantExpr(cst, ctx);
+  AffineExpr result = lhs.ceilDiv(rhs);
+  return Expr(evaluateAffineExpr(result, /*symbols=*/{this->v_}, *builder_),
+              ExprKind::kRegular, builder_);
+}
+
+Expr Expr::ceilDiv(const Expr &other) {
+  MLIRContext *ctx = getContext();
+  AffineExpr lhs = getAffineSymbolExpr(0, ctx);
+  AffineExpr rhs = getAffineSymbolExpr(1, ctx);
+  AffineExpr result = lhs.ceilDiv(rhs);
+  return Expr(
+      evaluateAffineExpr(result, /*symbols=*/{this->v_, other.v_}, *builder_),
+      ExprKind::kRegular, builder_);
+}
+
 Expr Expr::floorDiv(uint64_t cst) {
   MLIRContext *ctx = getContext();
   AffineExpr lhs = getAffineSymbolExpr(0, ctx);

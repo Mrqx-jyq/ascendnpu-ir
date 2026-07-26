@@ -29,13 +29,10 @@
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/AnyPBRSchedule.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/KernelInfoCollector.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/PureElemwiseSchedule.h"
-#include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/ShallowCVSchedule.h"
-// 添加
-#include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/ShallowVVSchedule.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/MixCVSchedule.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/MixC2Schedule.h"
-//
-
+#include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/ShallowCVSchedule.h"
+#include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/ShallowVVSchedule.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/SingleCubeSchedule.h"
 #include "bishengir/Dialect/HFusion/Transforms/CacheFuncIO.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
@@ -62,7 +59,6 @@
 #include "llvm/Support/Debug.h"
 
 #include "AutoScheduleAttrDefs.h"
-
 
 #define DEBUG_TYPE "hfusion-auto-schedule"
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] [Base Scheduler] ")
@@ -609,8 +605,6 @@ LogicalResult SchedulerBase::applySchedule(func::FuncOp &funcOp,
     scheduler = std::make_unique<ShallowCVScheduler>(funcOp);
     break;
   case FusionKind::ShallowVV:
-    // return success();
-    // 添加
     scheduler = std::make_unique<ShallowVVScheduler>(funcOp);
     break;
   case FusionKind::MixCV:
@@ -619,7 +613,6 @@ LogicalResult SchedulerBase::applySchedule(func::FuncOp &funcOp,
   case FusionKind::MixC2:
     scheduler = std::make_unique<MixC2Scheduler>(funcOp);
     break;
-    //
   case FusionKind::Unknown:
   default:
     return funcOp.emitError("Unknown kernel fusion kind");
@@ -1236,14 +1229,14 @@ void AutoSchedulePass::setOptionsForFunc(AutoScheduleOptions &options,
   options.enableSymbolAnalysis = this->enableSymbolAnalysis;
 
   auto maybeFusionKind = hfusion::tryGetFusionKind(func);
-  // For cube and mix fusion kind, the block dim is set to half because cube
-  // and vector is 1:2 for now.
+  // For cube and mix fusion kind, use reduced block dim (3/4 of full)
+  // because cube operations have their own internal parallelism.
   if (maybeFusionKind.has_value() &&
-    ((*maybeFusionKind) == FusionKind::MixCV ||
-     (*maybeFusionKind) == FusionKind::SingleCube ||
-     (*maybeFusionKind) == FusionKind::MixC2 ||          // ← 加上这行
-     (*maybeFusionKind) == FusionKind::ShallowCV)) {
-    options.blockDim = std::max(this->blockDim / 2, (unsigned int)1);
+      ((*maybeFusionKind) == FusionKind::MixCV ||
+       (*maybeFusionKind) == FusionKind::SingleCube ||
+       (*maybeFusionKind) == FusionKind::MixC2 ||
+       (*maybeFusionKind) == FusionKind::ShallowCV)) {
+    options.blockDim = std::max((unsigned int)(this->blockDim * 3 / 4), (unsigned int)1);
   } else {
     options.blockDim = this->blockDim;
   }

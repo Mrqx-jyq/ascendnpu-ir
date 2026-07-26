@@ -1,4 +1,4 @@
-//===- ShallowVVSchedule.h -- Schedule for Shallow VV Op --------*- C++ -*-===//
+﻿//===- ShallowVVSchedule.h -- Schedule for Shallow VV Op ----------*- C++ -*-===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,7 +34,11 @@ class NamedSequenceOp;
 
 namespace hfusion {
 
-/// Scheduler for shallow vv (Vector-Vector) kernels.
+/// Scheduler for shallow vv kernels.
+///
+/// Shallow VV (Vector-Vector) kernels consist primarily of element-wise
+/// operations.  This scheduler extracts PureElemwise subgraphs, recursively
+/// schedules them, and applies TensorResultToOutParam to the outer function.
 class ShallowVVScheduler : public SchedulerBase {
 public:
   explicit ShallowVVScheduler(func::FuncOp funcOpIn)

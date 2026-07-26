@@ -305,11 +305,20 @@ def DebugOp :
                  StrAttr:$prefix,
                  BoolAttr:$hex,
                  AnyTypeOf<[AnyInteger, AnyFloat, TensorOrMemref]>:$arg,
-                 OptionalAttr<HIVM_TCoreTypeAttr>:$tcoretype)> {
+                 OptionalAttr<HIVM_TCoreTypeAttr>:$tcoretype,
+                 OptionalAttr<HIVM_AddressSpaceAttr>:$memscope)> {
   let summary = "Device-side debugging";
   let assemblyFormat = [{
     attr-dict $arg `:` type($arg)
   }];
+  let builders = [
+    OpBuilder<(ins "StringRef":$debugtype, "StringRef":$prefix,
+                   "bool":$hex, "Value":$arg)>,
+    OpBuilder<(ins "StringRef":$debugtype, "StringRef":$prefix,
+                   "bool":$hex, "Value":$arg, "hivm::TCoreTypeAttr":$tcoretype)>,
+    OpBuilder<(ins "StringRef":$debugtype, "StringRef":$prefix,
+                   "bool":$hex, "Value":$arg, "hivm::AddressSpaceAttr":$memscope)>
+  ];
   let hasCanonicalizer = 1;
   let extraClassDeclaration = [{
     static StringRef getOpName() { return "debug"; }
@@ -341,9 +350,7 @@ def GatherLoadOp : HIVM_Op<"gather_load", [
     SameVariadicOperandSize,
     AllElementTypesMatch<["base", "dst"]>,
     AllRanksMatch<["indices", "dst"]>,
-    AllShapesMatch<["indices", "dst"]>,
-    OptionalTypesMatchWith<"base and other have same element type",
-                           "base", "other", "getElementTypeOrSelf($_self)">
+    AllShapesMatch<["indices", "dst"]>
 ]> {
   let summary = [{
     Perform sparse memory loading with optional mask and other
@@ -376,7 +383,7 @@ def GatherLoadOp : HIVM_Op<"gather_load", [
                        RankedTensorOf<[I32, I64]>:$indices,
                        AnyTypeOf<[I32, I64]>:$burst_len,
                        Optional<RankedTensorOf<[I1]>>:$mask,
-                       Optional<AnyTypeOf<[AnyInteger, AnyFloat]>>:$other,
+                       Optional<AnyRankedTensor>:$other,
                        TensorOrMemref:$dst,
                        OptionalAttr<HIVM_CacheModifierAttr>:$cache,
                        OptionalAttr<HIVM_EvictionPolicyAttr>:$evict,

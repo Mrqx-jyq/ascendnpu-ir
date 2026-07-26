@@ -813,9 +813,7 @@ struct HFusionPrintOpToHIVMDebugOp : public OpRewritePattern<hfusion::PrintOp> {
     Value opArg = op.getArg();
 
     (void)(rewriter.replaceOpWithNewOp<hivm::DebugOp>(
-        op, HIVMDebugTypePrint, op.getPrefix(), op.getHex(), opArg,
-        hivm::TCoreTypeAttr::get(op->getContext(),
-                                 hivm::TCoreType::CUBE_OR_VECTOR)));
+        op, HIVMDebugTypePrint, op.getPrefix(), op.getHex(), opArg));
 
     return success();
   }
@@ -836,9 +834,7 @@ struct HFusionAssertOpToHIVMDebugOp
     rewriter.setInsertionPoint(op);
 
     (void)(rewriter.replaceOpWithNewOp<hivm::DebugOp>(
-        op, HIVMDebugTypeAssert, op.getMsg(), false /* hex */, op.getCond(),
-        hivm::TCoreTypeAttr::get(op->getContext(),
-                                 hivm::TCoreType::CUBE_OR_VECTOR)));
+        op, HIVMDebugTypeAssert, op.getMsg(), false /* hex */, op.getCond()));
 
     return success();
   }
@@ -1088,7 +1084,7 @@ struct HFusionToHIVMConv2DOp : public OpRewritePattern<hfusion::Conv2DOp> {
     auto weight = op.getWeight();
     auto bias = op.getBias();
     auto group = op.getGroups();
-    auto padding = op.getPadding();
+    auto padding = op.getPaddingAttr();
     Value initCondition =
         rewriter.create<arith::ConstantIntOp>(op->getLoc(), 1, int1Type);
     rewriter.replaceOpWithNewOp<hivm::Conv2DL1Op>(op, resType, input, weight,
@@ -1112,7 +1108,7 @@ struct HFusionToHIVMConv3DOp : public OpRewritePattern<hfusion::Conv3DOp> {
     auto weight = op.getWeight();
     auto bias = op.getBias();
     auto group = op.getGroups();
-    auto padding = op.getPadding();
+    auto padding = op.getPaddingAttr();
     Value initCondition =
         rewriter.create<arith::ConstantIntOp>(op->getLoc(), 1, int1Type);
     rewriter.replaceOpWithNewOp<hivm::Conv3DL1Op>(op, resType, input, weight,

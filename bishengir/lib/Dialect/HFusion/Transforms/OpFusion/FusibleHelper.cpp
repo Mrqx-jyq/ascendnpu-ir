@@ -325,6 +325,7 @@ bool FusibleHelper::isRestrictedByDynamicShape(Operation *op,
 bool FusibleHelper::isShapePivot(Operation *op) const {
   switch (fusionKind_) {
   case FusionKind::MixCV:
+  case FusionKind::MixC2:
     return getOpPattern(op) == OpPattern::kMatmul;
   case FusionKind::AnyPB:
   case FusionKind::LastAxisPBR:
@@ -422,6 +423,7 @@ bool FusibleHelper::schedulable(Operation *op) const {
   case FusionKind::ShallowVV:
     return isVectorPattern(currentPattern);
   case FusionKind::MixCV:
+  case FusionKind::MixC2:
     switch (currentPattern) {
     case OpPattern::kElementWise:
     case OpPattern::kZeroRankElemwise:
@@ -759,26 +761,34 @@ bool FusibleHelper::isMixCVFusible(const OpPattern &patternA,
 
 // TODO：support combination of any mesh op and matmul op after the template
 // library is ready
+// Extended MixC2 fusion: supports multi-Cube+Vector interleaving patterns.
+// A) Mesh: AllGather + Matmul + AllReduce/ReduceScatter (original)
+// B) Matmul + Elementwise chain (same as MixCV suffix)
+// C) Elementwise + Elementwise (vector chain)
+// D) Matmul + Matmul (multi-cube)
 bool FusibleHelper::isMixC2Fusible(const OpPattern &patternA,
                                    const OpPattern &patternB) const {
+  auto isVec = [](const OpPattern &p) -> bool {
+    switch (p) {
+    case OpPattern::kElementWise: case OpPattern::kZeroRankElemwise:
+    case OpPattern::kExtractSlice: case OpPattern::kInsertSlice:
+    case OpPattern::kInterleave: case OpPattern::kLastAxisBroadcast:
+    case OpPattern::kLastAxisReduce: case OpPattern::kLoadStore:
+    case OpPattern::kMidFusionAuxiliary: case OpPattern::kMidFusionImportantAux:
+    case OpPattern::kOtherBroadcast: case OpPattern::kOtherReduce:
+    case OpPattern::kReshape: case OpPattern::kTranspose:
+      return true;
+    default: return false;
+    }
+  };
   switch (patternA) {
   case OpPattern::kAllGather:
-    switch (patternB) {
-    case OpPattern::kMatmul:
-      return true;
-    default:
-      return false;
-    }
+    return patternB == OpPattern::kMatmul;
   case OpPattern::kMatmul:
-    switch (patternB) {
-    case OpPattern::kAllReduce:
-    case OpPattern::kReduceScatter:
-      return true;
-    default:
-      return false;
-    }
+    return isVec(patternB) || patternB == OpPattern::kMatmul ||
+           patternB == OpPattern::kAllReduce || patternB == OpPattern::kReduceScatter;
   default:
-    return false;
+    return isVec(patternA) && (isVec(patternB) || patternB == OpPattern::kMatmul);
   }
 }
 

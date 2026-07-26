@@ -1195,4 +1195,14 @@ def HIVM_PreloadLocalBufferAttr
   }];
 }
 
+//===----------------------------------------------------------------------===//
+// Distributed
+//===----------------------------------------------------------------------===//
+
+def HIVM_IsDistributedAttr : HIVM_Attr<"IsDistributed", "is_distributed"> {
+  let description = [{
+    Specifies an op is about distributed.
+  }];
+}
+
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMATTRS_TD

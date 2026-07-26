@@ -996,12 +996,14 @@ std::pair<Expr, Expr> AnyPBRScheduler::getMultiCoreNum(
   // Get available cores from `totalCores` for loop iteration of `dimIdx`
   auto getAvailableCoresForDim = [&tileSizes, &dimSizes,
                                   &totalCores](int64_t dimIdx) {
-    // Get loop iteration num for dim by `dimSize / tileSize`
+    // Get the loop trip count for this dimension. The final, partial tile
+    // also has work to do and must receive a core when one is available.
     Expr dimSize = dimSizes[dimIdx];
     const Expr &tileSize = tileSizes[dimIdx];
-    // NOTE: `dimSize < tileSize` can happen when reserve and restore ub space,
+    // NOTE: `dimSize < tileSize` can happen when reserving and restoring UB
+    // space;
     // use `max` with `1` to avoid div-by-zero error
-    Expr loopIterationNum = max(dimSize.floorDiv(tileSize), 1);
+    Expr loopIterationNum = max(dimSize.ceilDiv(tileSize), 1);
     // If there exist remaining available cores, allocate one core for one
     // loop iteration
     Expr coresForDim =
@@ -1010,25 +1012,26 @@ std::pair<Expr, Expr> AnyPBRScheduler::getMultiCoreNum(
     return coresForDim;
   };
 
-  // Allocate the remaining cores to the ParallelAxis.
-  // From high dimension to low dimension.
-  Expr totalCoresForParallelAxis = opBuilder->createConstExpr(1);
-  for (size_t dimIdx = 0; dimIdx < dimSizes.size(); ++dimIdx) {
-    if (reduceDims.contains(dimIdx))
-      continue;
-    Expr coresForDim = getAvailableCoresForDim(dimIdx);
-    totalCoresForParallelAxis = totalCoresForParallelAxis * coresForDim;
-  }
-
-  // Allocate the remaining cores to the ReduceAxis.
-  // From low dimension to high dimension.
+  // Allocate cores to the ReduceAxis first (prioritize split-K parallelism).
+  // From outermost to innermost dimension.
   Expr totalCoresForReduceAxis = opBuilder->createConstExpr(1);
-  for (int64_t dimIdx = static_cast<int64_t>(dimSizes.size()); dimIdx >= 0;
+  for (int64_t dimIdx = static_cast<int64_t>(dimSizes.size()) - 1; dimIdx >= 0;
        --dimIdx) {
     if (!reduceDims.contains(dimIdx))
       continue;
     Expr coresForDim = getAvailableCoresForDim(dimIdx);
     totalCoresForReduceAxis = totalCoresForReduceAxis * coresForDim;
+  }
+
+  // Allocate the remaining cores to the ParallelAxis.
+  // From outermost to innermost dimension.
+  Expr totalCoresForParallelAxis = opBuilder->createConstExpr(1);
+  for (int64_t dimIdx = static_cast<int64_t>(dimSizes.size()) - 1; dimIdx >= 0;
+       --dimIdx) {
+    if (reduceDims.contains(dimIdx))
+      continue;
+    Expr coresForDim = getAvailableCoresForDim(dimIdx);
+    totalCoresForParallelAxis = totalCoresForParallelAxis * coresForDim;
   }
   return {totalCoresForParallelAxis, totalCoresForReduceAxis};
 }

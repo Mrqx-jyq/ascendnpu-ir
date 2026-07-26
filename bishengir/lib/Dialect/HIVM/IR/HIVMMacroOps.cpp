@@ -38,6 +38,7 @@
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/raw_ostream.h"
+#include <array>
 #include <cassert>
 #include <cstdint>
 #include <iterator>
@@ -62,6 +63,65 @@ FailureOr<size_t> getRankFromShapedTypeValue(Value val) {
     return failure();
   }
   return valType.getRank();
+}
+
+//===----------------------------------------------------------------------===//
+// Utils for Conv Ops
+//===----------------------------------------------------------------------===//
+
+template <size_t Rank>
+FailureOr<std::array<int64_t, Rank>>
+getConvIntArrayAttr(Attribute attr, StringRef attrName,
+                    function_ref<InFlightDiagnostic()> emitError) {
+  auto emitInvalidAttr = [&]() {
+    emitError() << "`" << attrName << "` must be an integer scalar or a "
+                << Rank << "-element integer array";
+    return failure();
+  };
+
+  if (auto intAttr = dyn_cast<IntegerAttr>(attr)) {
+    int64_t value = intAttr.getInt();
+    std::array<int64_t, Rank> values;
+    values.fill(value);
+    return values;
+  }
+
+  if (auto denseAttr = dyn_cast<DenseI64ArrayAttr>(attr)) {
+    if (denseAttr.size() != Rank)
+      return emitInvalidAttr();
+    std::array<int64_t, Rank> values;
+    for (size_t idx = 0; idx < Rank; ++idx)
+      values[idx] = denseAttr[idx];
+    return values;
+  }
+
+  if (auto arrayAttr = dyn_cast<ArrayAttr>(attr)) {
+    if (arrayAttr.size() != Rank)
+      return emitInvalidAttr();
+
+    std::array<int64_t, Rank> values;
+    for (auto [idx, element] : llvm::enumerate(arrayAttr)) {
+      auto intAttr = dyn_cast<IntegerAttr>(element);
+      if (!intAttr)
+        return emitInvalidAttr();
+      values[idx] = intAttr.getInt();
+    }
+    return values;
+  }
+
+  return emitInvalidAttr();
+}
+
+FailureOr<std::array<int64_t, 2>>
+getConv2DIntPairAttr(Attribute attr, StringRef attrName,
+                     function_ref<InFlightDiagnostic()> emitError) {
+  return getConvIntArrayAttr<2>(attr, attrName, emitError);
+}
+
+FailureOr<std::array<int64_t, 3>>
+getConv3DIntTripleAttr(Attribute attr, StringRef attrName,
+                       function_ref<InFlightDiagnostic()> emitError) {
+  return getConvIntArrayAttr<3>(attr, attrName, emitError);
 }
 
 //===----------------------------------------------------------------------===//
@@ -865,6 +925,12 @@ Conv1DL1Op::getLibraryCallOperands(PatternRewriter &rewriter) {
 // Conv2DL1Op
 //===----------------------------------------------------------------------===//
 
+LogicalResult Conv2DL1Op::verify() {
+  FailureOr<std::array<int64_t, 2>> padding = getConv2DIntPairAttr(
+      getPaddingAttr(), "padding", [&]() { return emitOpError(); });
+  return failed(padding) ? failure() : success();
+}
+
 bool Conv2DL1Op::isInitConstant(std::optional<bool> cst) {
   return isInitConstantForLocalMmadOp<Conv2DL1Op>(this, cst);
 }
@@ -962,11 +1028,14 @@ Conv2DL1Op::getLibraryCallOperands(PatternRewriter &rewriter) {
 
   libParams.push_back(makeI64(getGroups()));
 
-  int64_t pad = getPadding();
-  libParams.push_back(makeI64(pad));   // padT
-  libParams.push_back(makeI64(pad));   // padB
-  libParams.push_back(makeI64(pad)); // padL
-  libParams.push_back(makeI64(pad)); // padR
+  FailureOr<std::array<int64_t, 2>> padding =
+      getConv2DIntPairAttr(getPaddingAttr(), "padding",
+                           [&]() { return emitOpError(); });
+  assert(!failed(padding) && "Conv2DL1Op padding must be verified");
+  libParams.push_back(makeI64((*padding)[0])); // padT
+  libParams.push_back(makeI64((*padding)[0])); // padB
+  libParams.push_back(makeI64((*padding)[1])); // padL
+  libParams.push_back(makeI64((*padding)[1])); // padR
 
   libParams.push_back(makeI64(1)); // strideH
   libParams.push_back(makeI64(1)); // strideW
@@ -991,6 +1060,12 @@ Conv2DL1Op::getLibraryCallOperands(PatternRewriter &rewriter) {
 //===----------------------------------------------------------------------===//
 // Conv3DL1Op
 //===----------------------------------------------------------------------===//
+
+LogicalResult Conv3DL1Op::verify() {
+  FailureOr<std::array<int64_t, 3>> padding = getConv3DIntTripleAttr(
+      getPaddingAttr(), "padding", [&]() { return emitOpError(); });
+  return failed(padding) ? failure() : success();
+}
 
 bool Conv3DL1Op::isInitConstant(std::optional<bool> cst) {
   return isInitConstantForLocalMmadOp<Conv3DL1Op>(this, cst);

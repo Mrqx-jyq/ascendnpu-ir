@@ -645,7 +645,13 @@ def Conv2DL1Op : HIVM_MacroOp<"Conv2dL1",[
                         synchronization instructions, they are
                         managed by inject-sync passes.
                       }]>:$sync_related_args,
-                      I32Attr:$padding,
+                      Arg<AnyAttr, [{
+                        Zero-padding for Conv2d. Accepts an integer scalar or a
+                        2-element integer array [paddingH, paddingW]. A scalar
+                        applies to both H and W directions. During library-call
+                        lowering, paddingH is used for padT/padB and paddingW
+                        is used for padL/padR.
+                      }]>:$padding,
                       I32Attr:$groups
                       );
   let results = (outs Variadic<AnyRankedTensor>:$result_tensors);
@@ -691,6 +697,7 @@ def Conv2DL1Op : HIVM_MacroOp<"Conv2dL1",[
     SmallVector<Value> getInputOperands(bool includeSyncRelatedArgs = true);
     SmallVector<Value> getLibraryCallOperands(PatternRewriter &rewriter);
   }];
+  let hasVerifier = 1;
 }
 
 //===----------------------------------------------------------------------===//
@@ -716,7 +723,13 @@ def Conv3DL1Op : HIVM_MacroOp<"Conv3dL1",[
                         synchronization instructions, they are
                         managed by inject-sync passes.
                       }]>:$sync_related_args,
-                      I32Attr:$padding,
+                      Arg<AnyAttr, [{
+                        Zero-padding for Conv3d. Accepts an integer scalar or a
+                        3-element integer array [paddingD, paddingH, paddingW].
+                        A scalar applies to all D/H/W directions. Normalize
+                        materializes paddingD and decompose forwards paddingH
+                        and paddingW to Conv2dL1.
+                      }]>:$padding,
                       I32Attr:$groups
                       );
   let results = (outs Variadic<AnyRankedTensor>:$result_tensors);
@@ -749,6 +762,7 @@ def Conv3DL1Op : HIVM_MacroOp<"Conv3dL1",[
 
     static StringRef getOpName() { return "Conv3dL1"; }
   }];
+  let hasVerifier = 1;
 }
  	 
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMMACROOPS_TD

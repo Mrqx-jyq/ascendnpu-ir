@@ -657,6 +657,18 @@ LogicalResult GatherLoadOp::verify() {
                          "shape and rank as indices");
     }
   }
+  if (auto other = getOther()) {
+    auto otherType = cast<RankedTensorType>(other.getType());
+    if (otherType.getShape() != indicesType.getShape()) {
+      return emitOpError("other of hivm::GatherLoadOp must have the same "
+                         "shape and rank as indices");
+    }
+    auto otherElementType = otherType.getElementType();
+    if (otherElementType != getElementTypeOrSelf(getBase())) {
+      return emitOpError("other of hivm::GatherLoadOp must have the same "
+                         "element type as base");
+    }
+  }
   return success();
 }
 
@@ -830,3 +842,25 @@ void CustomOp::getEffects(
 }
 
 const DenseMap<StringRef, CustomOp::BuiltinInfo> CustomOp::kBuiltins{};
+
+//===----------------------------------------------------------------------===//
+// DebugOp
+//===----------------------------------------------------------------------===//
+
+void DebugOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                    StringRef debugtype, StringRef prefix, bool hex,
+                    Value arg) {
+  build(odsBuilder, odsState, debugtype, prefix, hex, arg, {}, {});
+}
+
+void DebugOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                    StringRef debugtype, StringRef prefix, bool hex,
+                    Value arg, hivm::TCoreTypeAttr tcoretype) {
+  build(odsBuilder, odsState, debugtype, prefix, hex, arg, tcoretype, {});
+}
+
+void DebugOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                    StringRef debugtype, StringRef prefix, bool hex,
+                    Value arg, hivm::AddressSpaceAttr memscope) {
+  build(odsBuilder, odsState, debugtype, prefix, hex, arg, {}, memscope);
+}

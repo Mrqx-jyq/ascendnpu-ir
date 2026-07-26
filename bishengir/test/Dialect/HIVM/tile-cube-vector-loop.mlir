@@ -1,5 +1,5 @@
 // RUN: bishengir-opt %s -tile-cube-vector-loop="tile-mix-cube-loop=4" -split-input-file | FileCheck %s --check-prefix=CHECK-CUBE
-// RUN: bishengir-opt %s -tile-cube-vector-loop="tile-mix-vector-loop=4" -split-input-file | FileCheck %s --check-prefix=CHECK-VECTOR
+// RUN: bishengir-opt %s -tile-cube-vector-loop="tile-mix-vector-loop=4" -split-input-file -verify-diagnostics | FileCheck %s --check-prefix=CHECK-VECTOR
 
 module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>>>} {
   func.func @test_cube(%lb: index, %ub: index, %gm_b: memref<?xf16>, %gm_offset: index, %gm_a: memref<?xf16>, %gm_c: memref<128x498xf32, strided<[498, 1], offset: ?>>) -> (memref<498x64xf16, strided<[?, ?], offset: ?>>) {
@@ -140,7 +140,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 }
 
 // -----
- 	 
+
 module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>>>} {
   // CHECK-CUBE-LABEL: func @test_scope
   // CHECK-VECTOR-LABEL: func @test_scope
@@ -166,5 +166,67 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
       scope.return %collapsed : tensor<128xf32>
     } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
     return %res : tensor<128xf32>
+  }
+}
+
+// -----
+
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>>>} {
+  // CHECK-VECTOR-LABEL: func @test_vcmp_tiling_i1_fail
+  func.func @test_vcmp_tiling_i1_fail(%lb: index, %ub: index, %gm_offset: index, %gm_src: tensor<4x8xf32>, %gm_dst: memref<4x8xi1>) -> (tensor<8xi1>) {
+    %c1 = arith.constant 1 : index
+    %c0 = arith.constant 0.0 : f32
+    %empty1 = tensor.empty() : tensor<8xi1>
+    %empty2 = tensor.empty() : tensor<8xf32>
+    %brc = hivm.hir.vbrc ins(%c0 :f32) outs(%empty2 : tensor<8xf32>) -> tensor<8xf32>
+    // CHECK-VECTOR: scf.for
+    // expected-error@+1 {{'scf.for' op Failed to collect vector loop tiling info}}
+    %res = scf.for %arg0 = %lb to %ub step %c1 iter_args(%arg1 = %empty1) -> (tensor<8xi1>) {
+      // CHECK-VECTOR: hivm.hir.load
+      // CHECK-VECTOR: hivm.hir.vcmp ins({{.*}} : tensor<8xf32>, tensor<8xf32>) outs({{.*}} : tensor<8xi1>)
+      %empty3 = tensor.empty() : tensor<8xf32>
+      %extracted_slice = tensor.extract_slice %gm_src[%gm_offset, 0] [1, 8] [1, 1] : tensor<4x8xf32> to tensor<8xf32>
+      %load = hivm.hir.load ins(%extracted_slice : tensor<8xf32>) outs(%empty3 : tensor<8xf32>) init_out_buffer = false -> tensor<8xf32>
+      %empty4 = tensor.empty() : tensor<8xi1>
+      %cmp = hivm.hir.vcmp ins(%load, %brc : tensor<8xf32>, tensor<8xf32>)
+                     outs(%empty4 : tensor<8xi1>)
+                     compare_mode = #hivm.compare_mode<gt> -> tensor<8xi1>
+      %subview = memref.subview %gm_dst[%gm_offset, 0] [1, 8] [1, 1] : memref<4x8xi1> to memref<1x8xi1, strided<[8, 1], offset: ?>>
+      %expanded = tensor.expand_shape %cmp [[0, 1]] output_shape [1, 8] : tensor<8xi1> into tensor<1x8xi1>
+      hivm.hir.store ins(%expanded : tensor<1x8xi1>) outs(%subview : memref<1x8xi1, strided<[8, 1], offset: ?>>)
+      scf.yield %cmp : tensor<8xi1>
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+    return %res : tensor<8xi1>
+  }
+}
+
+// -----
+
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>>>} {
+  // CHECK-VECTOR-LABEL: func @test_vcmp_tiling_i1_success
+  func.func @test_vcmp_tiling_i1_success(%lb: index, %ub: index, %gm_offset: index, %gm_src: tensor<4x32xf32>, %gm_dst: memref<4x32xi1>) -> (tensor<32xi1>) {
+    %c1 = arith.constant 1 : index
+    %c0 = arith.constant 0.0 : f32
+    %empty1 = tensor.empty() : tensor<32xi1>
+    %empty2 = tensor.empty() : tensor<32xf32>
+    %brc = hivm.hir.vbrc ins(%c0 :f32) outs(%empty2 : tensor<32xf32>) -> tensor<32xf32>
+    // CHECK-VECTOR: scf.for
+    %res = scf.for %arg0 = %lb to %ub step %c1 iter_args(%arg1 = %empty1) -> (tensor<32xi1>) {
+    // CHECK-VECTOR: scf.for
+      // CHECK-VECTOR: hivm.hir.load
+      // CHECK-VECTOR: hivm.hir.vcmp {vector_producer_to_fuse_0} ins({{.*}} : tensor<8xf32>, tensor<8xf32>) outs({{.*}} : tensor<8xi1>)
+      %empty3 = tensor.empty() : tensor<32xf32>
+      %extracted_slice = tensor.extract_slice %gm_src[%gm_offset, 0] [1, 32] [1, 1] : tensor<4x32xf32> to tensor<32xf32>
+      %load = hivm.hir.load ins(%extracted_slice : tensor<32xf32>) outs(%empty3 : tensor<32xf32>) init_out_buffer = false -> tensor<32xf32>
+      %empty4 = tensor.empty() : tensor<32xi1>
+      %cmp = hivm.hir.vcmp ins(%load, %brc : tensor<32xf32>, tensor<32xf32>)
+                     outs(%empty4 : tensor<32xi1>)
+                     compare_mode = #hivm.compare_mode<gt> -> tensor<32xi1>
+      %subview = memref.subview %gm_dst[%gm_offset, 0] [1, 32] [1, 1] : memref<4x32xi1> to memref<1x32xi1, strided<[32, 1], offset: ?>>
+      %expanded = tensor.expand_shape %cmp [[0, 1]] output_shape [1, 32] : tensor<32xi1> into tensor<1x32xi1>
+      hivm.hir.store ins(%expanded : tensor<1x32xi1>) outs(%subview : memref<1x32xi1, strided<[32, 1], offset: ?>>)
+      scf.yield %cmp : tensor<32xi1>
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+    return %res : tensor<32xi1>
   }
 }

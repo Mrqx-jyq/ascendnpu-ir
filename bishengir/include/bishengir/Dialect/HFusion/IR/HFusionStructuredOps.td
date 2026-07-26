@@ -420,21 +420,36 @@ def Conv2DOp
       / [N, oC, oH, oW] (batch size, output channel count, output height, output width)
 
     Configurable parameters (with default values):
-    - padding: Number of zero-padding elements on both sides, default=0
+    - stride: Convolution stride. Accepts an integer scalar or a 2-element
+      integer array [strideH, strideW], default=1. Currently only stride=1
+      is supported.
+    - padding: Number of zero-padding elements. Accepts an integer scalar or a
+      2-element integer array [paddingH, paddingW], default=0. A scalar applies
+      to both H and W directions.
+    - dilation: Kernel dilation. Accepts an integer scalar or a 2-element
+      integer array [dilationH, dilationW], default=1. Currently only
+      dilation=1 is supported.
     - groups: Number of groups for grouped convolution, default=1
     }];
   let arguments = (ins AnyShaped:$input,
                       AnyShaped:$weight,
                       Optional<AnyShaped>:$bias,
                       AnyShaped:$init,
-                      I32Attr:$stride,
-                      I32Attr:$padding,
-                      I32Attr:$dilation,
+                      AnyAttr:$stride,
+                      AnyAttr:$padding,
+                      AnyAttr:$dilation,
                       I32Attr:$groups);
   let results = (outs AnyTensor:$result);
   let regions = (region AnyRegion:$region);
   let skipDefaultBuilders = 1;
   let builders = [OpBuilder<
+                    (ins "ValueRange":$inputs,
+                        "Value":$output,
+                        "Attribute":$stride,
+                        "Attribute":$padding,
+                        "Attribute":$dilation,
+                        "int32_t":$groups)>,
+                  OpBuilder<
                     (ins "ValueRange":$inputs,
                         "Value":$output,
                         "int32_t":$stride,
@@ -491,7 +506,15 @@ def Conv3DOp
       / [N, oC, oD, oH, oW] (batch size, output channel count, output depth, output height, output width)
 
     Configurable parameters (with default values):
-    - padding: Number of zero-padding elements on both sides, default=0
+    - stride: Convolution stride. Accepts an integer scalar or a 3-element
+      integer array [strideD, strideH, strideW], default=1. Currently only
+      stride=1 is supported.
+    - padding: Number of zero-padding elements. Accepts an integer scalar or a
+      3-element integer array [paddingD, paddingH, paddingW], default=0. A
+      scalar applies to all D/H/W directions.
+    - dilation: Kernel dilation. Accepts an integer scalar or a 3-element
+      integer array [dilationD, dilationH, dilationW], default=1. Currently
+      only dilation=1 is supported.
     - groups: Number of groups for grouped convolution, default=1
     }];
 
@@ -499,14 +522,21 @@ def Conv3DOp
                       AnyShaped:$weight,
                       Optional<AnyShaped>:$bias,
                       AnyShaped:$init,
-                      I32Attr:$stride,
-                      I32Attr:$padding,
-                      I32Attr:$dilation,
+                      AnyAttr:$stride,
+                      AnyAttr:$padding,
+                      AnyAttr:$dilation,
                       I32Attr:$groups);
   let results = (outs AnyTensor:$result);
   let regions = (region AnyRegion:$region);
   let skipDefaultBuilders = 1;
   let builders = [OpBuilder<
+                    (ins "ValueRange":$inputs,
+                        "Value":$output,
+                        "Attribute":$stride,
+                        "Attribute":$padding,
+                        "Attribute":$dilation,
+                        "int32_t":$groups)>,
+                  OpBuilder<
                     (ins "ValueRange":$inputs,
                         "Value":$output,
                         "int32_t":$stride,

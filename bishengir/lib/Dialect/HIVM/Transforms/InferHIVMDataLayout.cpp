@@ -15,13 +15,14 @@
 //
 //===----------------------------------------------------------------------===//
 #include "bishengir/Dialect/HIVM/Transforms/InferHIVMDataLayout.h"
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
+#include "bishengir/Dialect/HIVM/Transforms/DistributedTransformUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
-#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
@@ -41,8 +42,10 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/SmallVectorExtras.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -613,6 +616,9 @@ DataLayoutInferAndPropagateHelper::propagateDataLayoutToUsers(
             [&](bishengir::memref_ext::AllocWorkspaceOp op) {
               populateLayout(op->getResults(), info, changed);
             })
+        // TODO: adapt custom op's infer data layout in V2
+        .Case<hivm::CustomOp>(
+            [&](hivm::CustomOp op) { populateLayoutToHIVMCustom(op, changed); })
         .Default([&](Operation *op) {
           // Don't need to update Ops that don't have results.
           if (op->getNumResults() == 0)
@@ -689,6 +695,24 @@ void DataLayoutInferAndPropagateHelper::populateLayout(
       continue;
     if (populateLayoutIfAbsent(value, info))
       changed.push_back(value);
+  }
+}
+
+void DataLayoutInferAndPropagateHelper::populateLayoutToHIVMCustom(
+    hivm::CustomOp op, SmallVector<Value> &changed) {
+  if (!llvm::any_of(op->getResultTypes(), [](Type v) {
+        return ::llvm::isa<::mlir::BaseMemRefType>(v);
+      })) {
+    return;
+  }
+  auto results = op->getResults();
+  auto symbol = op.getSymbol();
+  llvm::StringRef symbolRef = symbol;
+  if (symbolRef.starts_with(kShmemConsumeToken) ||
+      symbolRef.starts_with(kShmemPtr)) {
+    updateLayout(results, layout_info_[op->getOperand(0)], changed);
+  } else {
+    op->emitWarning("unsupport hivm.custom symbol for infer results layout");
   }
 }
 

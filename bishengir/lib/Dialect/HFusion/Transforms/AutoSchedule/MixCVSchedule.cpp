@@ -1,4 +1,4 @@
-//===- MixCVSchedule.cpp -- Auto-schedule fused kernels --------*- C++ -*-===//
+﻿//===- MixCVSchedule.cpp -- Auto-schedule fused kernels --------*- C++ -*-===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,6 +14,10 @@
 // limitations under the License.
 //
 //===----------------------------------------------------------------------===//
+//
+// This file implements auto schedule policy for mix cv kernels.
+//
+//===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/MixCVSchedule.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/AutoScheduleBase.h"
@@ -23,7 +27,7 @@
 #include "llvm/Support/Debug.h"
 
 #define DEBUG_TYPE "hfusion-mix-cv"
-#define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] [Mix CV] ")
+#define DBGS() (llvm::dbgs() << "[" << DEBUG_TYPE << "] [Mix CV] ")
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
 using namespace mlir;
@@ -36,19 +40,20 @@ using namespace mlir::hfusion;
 LogicalResult MixCVScheduler::runOnOperation(OpBuilder &opBuilder) {
   func::FuncOp mixCVFunc = getOriginalKernel();
 
-  // Step 1: Apply LastAxisPBR opfusion within the MixCV kernel.
-  // MixCV contains matmul (Cube) + elemwise/transpose/reduce (Vector) ops.
-  // LastAxisPBR fusion can decompose the kernel into sub-kernels.
+  // Step 1: Apply LastAxisPBR opfusion (elemwise + broadcast/reduce fusion).
+  // MixCV kernels consist of Cube (matmul) + Vector (elemwise) operations.
+  // We first fuse all vector operations using LastAxisPBR pattern.
   HFusionOpFusionOptions options;
   options.fusionMode = FusionKind::LastAxisPBR;
   options.alwaysInline = true;
+  // Fuse all tensor.empty inside and let TensorResultToOutParam do its work.
   options.moveOutToParam = false;
   FailureOr<SmallVector<func::FuncOp>> outlinedFuncs =
       applyOpFusionOutline(mixCVFunc, options);
   if (failed(outlinedFuncs))
     return mixCVFunc->emitError("Failed to apply LastAxisPBR fusion.");
 
-  // Step 2: Apply Schedule for each outlined kernel.
+  // Step 2: Apply Schedule for outlined vector kernels.
   for (auto funcOp : *outlinedFuncs) {
     LDBG("Scheduling outlined func: " << *funcOp);
     if (failed(applySchedule(funcOp, opBuilder)))

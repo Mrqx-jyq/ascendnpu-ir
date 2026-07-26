@@ -851,6 +851,7 @@ static void registerOne(RewritePatternSet &patterns) {
       InsertLoadStoreOpBetweenVectorAndCube<OpType, hivm::MmadL1Op>,
       InsertLoadStoreOpBetweenVectorAndCube<OpType, hivm::Conv1DL1Op>,
       InsertLoadStoreOpBetweenVectorAndCube<OpType, hivm::Conv2DL1Op>,
+      InsertLoadStoreOpBetweenVectorAndCube<OpType, hivm::Conv3DL1Op>,
       InsertLoadStoreOpBetweenVectorAndCube<OpType, hivm::BatchMmadL1Op>,
       InsertStoreOpBetweenVectorAndLoad<OpType>,
       InsertLoadOpBetweenStoreLikeAndVectorOrCube<OpType>,
@@ -858,7 +859,8 @@ static void registerOne(RewritePatternSet &patterns) {
                                                      hivm::BatchMmadL1Op>,
       InsertLoadStoreOpBetweenCrossLoopVectorAndCube<OpType, hivm::MmadL1Op>,
       InsertLoadStoreOpBetweenCrossLoopVectorAndCube<OpType, hivm::Conv1DL1Op>,
-      InsertLoadStoreOpBetweenCrossLoopVectorAndCube<OpType, hivm::Conv2DL1Op>>(
+      InsertLoadStoreOpBetweenCrossLoopVectorAndCube<OpType, hivm::Conv2DL1Op>,
+      InsertLoadStoreOpBetweenCrossLoopVectorAndCube<OpType, hivm::Conv3DL1Op>>(
       patterns.getContext());
 }
 
@@ -880,6 +882,8 @@ void populateInsertLoadStorePattern(RewritePatternSet &patterns) {
       patterns.getContext());
   patterns.add<InsertLoadOpBetweenStoreLikeAndVectorOrCube<hivm::Conv2DL1Op>>(
       patterns.getContext());
+  patterns.add<InsertLoadOpBetweenStoreLikeAndVectorOrCube<hivm::Conv3DL1Op>>(
+      patterns.getContext());
   patterns.add<InsertLoadOpBetweenStoreLikeAndVectorOrCube<hivm::StoreOp>>(
       patterns.getContext());
   patterns
@@ -891,6 +895,9 @@ void populateInsertLoadStorePattern(RewritePatternSet &patterns) {
   patterns
       .add<InsertLoadStoreOpBetweenVectorAndCube<scf::ForOp, hivm::Conv2DL1Op>>(
           patterns.getContext());
+  patterns
+      .add<InsertLoadStoreOpBetweenVectorAndCube<scf::ForOp, hivm::Conv3DL1Op>>(
+          patterns.getContext());
   patterns.add<InsertLoadStoreOpBetweenVectorAndCube<bufferization::ToTensorOp,
                                                      hivm::MmadL1Op>>(
       patterns.getContext());
@@ -900,6 +907,9 @@ void populateInsertLoadStorePattern(RewritePatternSet &patterns) {
   patterns.add<InsertLoadStoreOpBetweenVectorAndCube<bufferization::ToTensorOp,
                                                      hivm::Conv2DL1Op>>(
       patterns.getContext());
+  patterns.add<InsertLoadStoreOpBetweenVectorAndCube<bufferization::ToTensorOp,
+                                                     hivm::Conv3DL1Op>>(
+      patterns.getContext());
   patterns.add<InsertLoadStoreOpBetweenVectorAndCube<tensor::CollapseShapeOp,
                                                      hivm::MmadL1Op>>(
       patterns.getContext());
@@ -908,6 +918,9 @@ void populateInsertLoadStorePattern(RewritePatternSet &patterns) {
       patterns.getContext());
   patterns.add<InsertLoadStoreOpBetweenVectorAndCube<tensor::CollapseShapeOp,
                                                      hivm::Conv2DL1Op>>(
+      patterns.getContext());
+  patterns.add<InsertLoadStoreOpBetweenVectorAndCube<tensor::CollapseShapeOp,
+                                                     hivm::Conv3DL1Op>>(
       patterns.getContext());
   patterns.add<InsertLoadOpBetweenStoreLikeAndVectorOrCube<tensor::ExtractOp>>(
       patterns.getContext());
@@ -1004,8 +1017,8 @@ static LogicalResult insertPropagationOp(func::FuncOp funcOp) {
 
 static LogicalResult propagateAndResolve(func::FuncOp funcOp) {
   SmallVector<PropagationStep> propagations = {
-      PropagationStep::LOCAL, PropagationStep::UB, PropagationStep::L1,
-      PropagationStep::ALL};
+      PropagationStep::LOCAL, PropagationStep::GM, PropagationStep::UB,
+      PropagationStep::L1, PropagationStep::ALL};
   for (auto step : propagations) {
     if (failed(runPropagateOpPatterns(funcOp, step))) {
       return failure();
@@ -1064,11 +1077,16 @@ void InsertLoadStoreForMixCVPass::runOnOperation() {
           auto upProp = PropagatorUtil::getUpPropagator(&op.getArgMutable());
           if (upProp) {
             auto coreType = PropagatorUtil::getCoreType(upProp);
+            auto addressSpaces = PropagatorUtil::getAddressSpace(upProp);
+            if (!addressSpaces.empty()) {
+              auto memScopeAttr = hivm::AddressSpaceAttr::get(op.getContext(),
+                                                              addressSpaces[0]);
+              op.setMemscopeAttr(memScopeAttr);
+            }
             if (coreType != TCoreType::CUBE_AND_VECTOR) {
               op.setTcoretypeAttr(
                   TCoreTypeAttr::get(op.getContext(), coreType));
             } else {
-              auto addressSpaces = PropagatorUtil::getAddressSpace(upProp);
               auto addressSpace = addressSpaces.empty() ? hivm::AddressSpace::UB
                                                         : addressSpaces[0];
               op.setTcoretypeAttr(TCoreTypeAttr::get(

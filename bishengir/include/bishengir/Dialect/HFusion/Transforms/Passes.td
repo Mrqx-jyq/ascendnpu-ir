@@ -66,16 +66,16 @@ def AutoSchedule : Pass<"hfusion-auto-schedule", "ModuleOp"> {
                            "transform::TransformDialect", "arith::ArithDialect",
                            "hacc::HACCDialect"];
   let options =
-      [Option<"blockDim", "block-dim", "unsigned", "1",
+      [Option<"blockDim", "block-dim", "unsigned", "40",
               "Number of blocks to use">,
        Option<"enableAutoMultiBuffer", "enable-auto-multi-buffer", "bool",
-              "false", "Enable auto multi buffer">,
+              "true", "Enable auto multi buffer">,
        Option<"enableDeterministicComputing", "enable-deterministic-computing", "bool",
               "true", "Enable deterministic computing">,
-       Option<"maxBufferCntTuning", "max-buffer-count-tuning", "int64_t", "0",
+       Option<"maxBufferCntTuning", "max-buffer-count-tuning", "int64_t", "-1",
               "allow maxBufferCnt tuning">,
        Option<"enableCountBufferDmaOpt", "enable-count-buffer-dma-opt", "bool",
-              "false",
+              "true",
               "If enabled, the buffer used by DMA operations will not be"
               "reused by Vector operations">,
        Option<"enableManageHostResources", "enable-manage-host-resources",
@@ -85,7 +85,7 @@ def AutoSchedule : Pass<"hfusion-auto-schedule", "ModuleOp"> {
        Option<"externalTilingFuncPath", "external-tiling-func-path", "std::string",
               "\"-\"", "auto add external tiling func">,
        Option<"enableSymbolAnalysis", "enable-symbol-analysis", "bool",
-              "false", "Enable symbol analysis for tiling and fusion">,
+              "true", "Enable symbol analysis for tiling and fusion">,
   ];
 }
 

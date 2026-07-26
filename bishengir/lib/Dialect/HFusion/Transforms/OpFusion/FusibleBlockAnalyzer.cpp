@@ -522,6 +522,7 @@ bool FusibleBlockAnalyzer::isRestrictedByShapePivot(int nodeA, int nodeB) {
   auto *opB = ops_[shapePivot_[nodeB]];
   switch (fusibleHelper_->getFusionKind()) {
   case FusionKind::ShallowCV:
+  case FusionKind::MixC2:
   case FusionKind::ShallowVV:
     return false;
   case FusionKind::MixCV:

@@ -23,6 +23,7 @@
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Tensor/IR/TensorImpl.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/DLTI/DLTI.h"
 #if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
 #include "mlir/Dialect/Linalg/IR/LinalgExtensions.h"
 #endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
@@ -133,6 +134,20 @@ SmallVector<Value> tracebackImpl(Value memrefVal) {
 } // namespace
 
 namespace utils {
+
+ModuleOp getTopLevelModuleOp(Operation *op) {
+  ModuleOp moduleOp = op->getParentOfType<ModuleOp>();
+  while (moduleOp && moduleOp->getParentOp()) {
+    auto spec = moduleOp->getAttrOfType<TargetSystemSpecAttr>(
+        "dlti.target_system_spec");
+    if (spec) {
+      return moduleOp;
+    }
+    moduleOp = moduleOp->getParentOfType<ModuleOp>();
+  }
+  return moduleOp;
+}
+
 void eraseTriviallyDeadOps(ArrayRef<Operation *> ops) {
   for (auto I = ops.rbegin(), E = ops.rend(); I != E;) {
     Operation *curOp = *I;
@@ -475,6 +490,11 @@ inline void markDynShapeAlloc(OpBuilder &builder, Value source,
   }
   int64_t allocSize =
       maybeStaticTotalSize.value() / static_cast<int64_t>(i8TypeWidth);
+  auto sourceElemTypeWidth =
+      getElementTypeOrSelf(source.getType()).getIntOrFloatBitWidth();
+  auto srcAllocElemTypeWidth =
+      getElementTypeOrSelf(srcAllocMemref).getIntOrFloatBitWidth();
+  allocSize = allocSize * srcAllocElemTypeWidth / sourceElemTypeWidth;
   // for dynamic case, set buffer size by annotation.mark op
   auto tmpMarkOp = builder.create<annotation::MarkOp>(tmpAllocOp->getLoc(),
                                                       tmpAllocOp->getResult(0));

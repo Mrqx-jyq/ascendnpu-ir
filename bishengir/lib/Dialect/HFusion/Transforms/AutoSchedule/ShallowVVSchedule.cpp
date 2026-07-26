@@ -1,4 +1,4 @@
-//===- ShallowVVSchedule.cpp -- Auto-schedule fused kernels -----*- C++ -*-===//
+﻿//===- ShallowVVSchedule.cpp -- Auto-schedule fused kernels -------*- C++ -*-===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,6 +14,10 @@
 // limitations under the License.
 //
 //===----------------------------------------------------------------------===//
+//
+// This file implements auto schedule policy for shallow vv kernels.
+//
+//===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/ShallowVVSchedule.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/AutoScheduleBase.h"
@@ -23,7 +27,7 @@
 #include "llvm/Support/Debug.h"
 
 #define DEBUG_TYPE "hfusion-shallow-vv"
-#define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] [Shallow VV] ")
+#define DBGS() (llvm::dbgs() << "[" << DEBUG_TYPE << "] [Shallow VV] ")
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
 using namespace mlir;
@@ -36,27 +40,20 @@ using namespace mlir::hfusion;
 LogicalResult ShallowVVScheduler::runOnOperation(OpBuilder &opBuilder) {
   func::FuncOp shallowVVFunc = getOriginalKernel();
 
-  bool isOutlinedWrapper = true;
-  for (Operation &op : shallowVVFunc.front().without_terminator()) {
-    if (!isa<func::CallOp>(op)) {
-      isOutlinedWrapper = false;
-      break;
-    }
-  }
-  if (isOutlinedWrapper)
-    return success();
-
-  // Step 1: Apply PureElemwise opfusion within the ShallowVV kernel.
+  // Step 1: Apply PureElemwise opfusion.
+  // Shallow VV kernels consist primarily of element-wise vector operations.
+  // Extract PureElemwise subgraphs for individual scheduling.
   HFusionOpFusionOptions options;
   options.fusionMode = FusionKind::PureElemwise;
   options.alwaysInline = true;
+  // Fuse all tensor.empty inside and let TensorResultToOutParam do its work.
   options.moveOutToParam = false;
   FailureOr<SmallVector<func::FuncOp>> outlinedFuncs =
       applyOpFusionOutline(shallowVVFunc, options);
   if (failed(outlinedFuncs))
     return shallowVVFunc->emitError("Failed to apply PureElemwise fusion.");
 
-  // Step 2: Apply Schedule for each outlined kernel.
+  // Step 2: Apply Schedule for outlined kernels.
   for (auto funcOp : *outlinedFuncs) {
     LDBG("Scheduling outlined func: " << *funcOp);
     if (failed(applySchedule(funcOp, opBuilder)))
