@@ -71,7 +71,7 @@ def AutoSchedule : Pass<"hfusion-auto-schedule", "ModuleOp"> {
        Option<"enableAutoMultiBuffer", "enable-auto-multi-buffer", "bool",
               "true", "Enable auto multi buffer">,
        Option<"enableDeterministicComputing", "enable-deterministic-computing", "bool",
-              "true", "Enable deterministic computing">,
+              "false", "Enable deterministic computing">,
        Option<"maxBufferCntTuning", "max-buffer-count-tuning", "int64_t", "-1",
               "allow maxBufferCnt tuning">,
        Option<"enableCountBufferDmaOpt", "enable-count-buffer-dma-opt", "bool",

@@ -1,4 +1,4 @@
-﻿//===- MixCVSchedule.h - MixCV Auto Schedule -------------------*- C++ -*-===//
+//===- MixCVSchedule.h - MixCV Auto Schedule -------------------*- C++ -*-===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,7 +29,8 @@ namespace hfusion {
 
 class MixCVScheduler : public SchedulerBase {
 public:
-  using SchedulerBase::SchedulerBase;
+  explicit MixCVScheduler(func::FuncOp funcOpIn)
+      : SchedulerBase(funcOpIn, FusionKind::MixCV){};
   LogicalResult runOnOperation(OpBuilder &opBuilder) override;
 
 protected:

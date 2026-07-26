@@ -1,4 +1,4 @@
-﻿//===- MixC2Schedule.h - MixC2 Auto Schedule -------------------*- C++ -*-===//
+//===- MixC2Schedule.h - MixC2 Auto Schedule -------------------*- C++ -*-===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,7 +29,8 @@ namespace hfusion {
 
 class MixC2Scheduler : public SchedulerBase {
 public:
-  using SchedulerBase::SchedulerBase;
+  explicit MixC2Scheduler(func::FuncOp funcOpIn)
+      : SchedulerBase(funcOpIn, FusionKind::MixC2){};
   LogicalResult runOnOperation(OpBuilder &opBuilder) override;
 
 protected:
