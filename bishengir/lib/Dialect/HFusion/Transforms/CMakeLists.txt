@@ -6,6 +6,9 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   ${AUTO_SCHEDULE}
   ${FLATTENER}
   ${OP_FUSION}
+  AutoTuningOptimization.cpp
+  DynamicShapeTilingPrepare.cpp
+  EnhancedFusionDecision.cpp
   AdaptTritonKernel.cpp
   AddFFTSAddr.cpp
   BufferizableOpInterfaceImpl.cpp
@@ -40,11 +43,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   LegalizeBool.cpp
   DowngradeFP64CstOp.cpp
   WrapHostFunc.cpp
-  AutoTuningOptimization.cpp
-  EnhancedFusionDecision.cpp
-  DynamicShapeTilingPrepare.cpp
-
-  ADDITIONAL_HEADER_DIRS
+        ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HFusion
 
   DEPENDS

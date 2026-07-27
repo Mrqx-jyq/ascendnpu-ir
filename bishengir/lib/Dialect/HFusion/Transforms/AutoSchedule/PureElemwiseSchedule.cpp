@@ -62,7 +62,14 @@ TilingComputeFn PureElemwiseScheduler::calculateTilingImpl() {
             StmtExprBuilder *opBuilder) -> TilingFnResultTy {
     OpBuilder::InsertionGuard g(*opBuilder);
 
-    int64_t maxBufferCnt = kernelInfo->maxBufferCnt;
+    // Cost-model: more ops = more compute per memory access = benefit from larger tiles
+    // Reduce effective buffer count for op-dense kernels (Roofline heuristic)
+    int64_t costModelBufCnt = kernelInfo->maxBufferCnt;
+    if (kernelInfo->numLinalgOps > 8) {
+      int64_t reduction = std::min(kernelInfo->numLinalgOps / 8, kernelInfo->maxBufferCnt - 1);
+      costModelBufCnt = std::max((int64_t)1, kernelInfo->maxBufferCnt - reduction);
+    }
+    int64_t maxBufferCnt = costModelBufCnt;
     assert(maxBufferCnt > 0 && "buffer count should be greater than zero!");
 
     // Calculate tiling data.
