@@ -208,38 +208,7 @@ std::unique_ptr<Pass> createDecomposePass(const DecomposeOptions &options = {});
 /// Create a pass to eliminate duplicate functions.
 std::unique_ptr<Pass> createEliminateDuplicateFuncsPass();
 
-/// Options for AutoTuningOptimization pass.
-struct AutoTuningOptimizationOptions {
-  bool enableCostModel = true;
-  int64_t maxCandidates = 16;
-  bool enableSearchPruning = true;
-};
-
-/// Options for EnhancedFusionDecision pass.
-struct EnhancedFusionDecisionOptions {
-  bool enableDataReuseAnalysis = true;
-  int64_t maxFusionDepth = 8;
-  double minDataReuseRatio = 1.5;
-};
-
-/// Options for DynamicShapeTilingPrepare pass.
-struct DynamicShapeTilingPrepareOptions {
-  bool enableRuntimeTilingSelection = true;
-  int64_t defaultTileSize = 128;
-};
-
-/// Create a pass for cost-model driven auto-tuning optimization.
-std::unique_ptr<Pass>
-createAutoTuningOptimizationPass(const AutoTuningOptimizationOptions &options = {});
-
-/// Create a pass for data-reuse driven fusion scoring.
-std::unique_ptr<Pass>
-createEnhancedFusionDecisionPass(const EnhancedFusionDecisionOptions &options = {});
-
-/// Create a pass for dynamic shape tiling preparation.
-std::unique_ptr<Pass>
-createDynamicShapeTilingPreparePass(const DynamicShapeTilingPrepareOptions &options = {});
-
+//===----------------------------------------------------------------------===//
 // Registration
 //===----------------------------------------------------------------------===//
 

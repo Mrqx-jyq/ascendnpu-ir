@@ -312,7 +312,7 @@ def EnableTuningMode : GeneralOptimizationControlOptions<
 def BlockDim : GeneralOptimizationControlOptions<
   "Number of blocks to use",
   "unsigned",
-  "40"
+  "1"
 > {
   let passGroup = ["HFUSION"];
 }
@@ -370,30 +370,6 @@ def enableHfusionCountBufferDmaOpt : HFusionOptimizationControlOptions<
   "be reused by Vector operations.",
   "bool",
   "false"
->;
-
-def EnableAutoTuningOpt : HFusionOptimizationControlOptions<
-  "Enable cost-model driven auto-tuning pass after auto-schedule.",
-  "bool",
-  "false"
->;
-
-def EnableEnhancedFusion : HFusionOptimizationControlOptions<
-  "Enable enhanced fusion decision with data reuse analysis.",
-  "bool",
-  "false"
->;
-
-def EnableDynamicTilingPrepare : HFusionOptimizationControlOptions<
-  "Enable dynamic shape tiling prepare pass.",
-  "bool",
-  "false"
->;
-
-def AutoTuningMaxCandidates : HFusionOptimizationControlOptions<
-  "Maximum number of tiling candidates in auto-tuning.",
-  "int64_t",
-  "16"
 >;
 
 //===----------------------------------------------------------------------===//

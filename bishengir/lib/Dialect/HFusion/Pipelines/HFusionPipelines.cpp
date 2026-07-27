@@ -178,17 +178,6 @@ static void inferAndOutlineOp(OpPassManager &pm,
                               const HFusionPipelineOptions &options) {
   pm.nest<func::FuncOp>().addPass(createFoldSymbolicDimPass());
   pm.nest<func::FuncOp>().addPass(createInferFuncFusionKind());
-
-  // Enhanced fusion decision: analyze data reuse before op fusion
-  if (options.enableEnhancedFusion) {
-    EnhancedFusionDecisionOptions enhancedOpts;
-    enhancedOpts.enableDataReuseAnalysis = true;
-    enhancedOpts.maxFusionDepth = 8;
-    enhancedOpts.minDataReuseRatio = 1.5;
-    pm.nest<func::FuncOp>().addPass(
-        createEnhancedFusionDecisionPass(enhancedOpts));
-  }
-
   HFusionOpFusionOptions opFusionPassOption;
   opFusionPassOption.alwaysInline = false;
   opFusionPassOption.moveOutToParam = false;
@@ -250,25 +239,6 @@ static void hfusionAutoSchedulePipeline(OpPassManager &pm,
   autoScheduleOptions.enableSymbolAnalysis = options.enableSymbolAnalysis;
   pm.addPass(createHFusionAutoSchedulePass(autoScheduleOptions));
   // END AUTO SCHEDULE
-
-  // Auto-tuning optimization: refine tiling parameters using cost model
-  if (options.enableAutoTuningOpt) {
-    AutoTuningOptimizationOptions tuningOpts;
-    tuningOpts.enableCostModel = true;
-    tuningOpts.maxCandidates = options.autoTuningMaxCandidates;
-    tuningOpts.enableSearchPruning = true;
-    pm.nest<func::FuncOp>().addPass(
-        createAutoTuningOptimizationPass(tuningOpts));
-  }
-
-  // Dynamic shape tiling prepare: optimize for dynamic shapes
-  if (options.enableDynamicTilingPrepare) {
-    DynamicShapeTilingPrepareOptions dynamicOpts;
-    dynamicOpts.enableRuntimeTilingSelection = true;
-    dynamicOpts.defaultTileSize = 128;
-    pm.nest<func::FuncOp>().addPass(
-        createDynamicShapeTilingPreparePass(dynamicOpts));
-  }
   pm.nest<func::FuncOp>().addPass(createDecomposeMulti());
   // Auto Schedule might generated generic ops.
   pm.nest<func::FuncOp>().addPass(createConvertGenericToNamedOpPass());

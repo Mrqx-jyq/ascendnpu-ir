@@ -6,10 +6,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   ${AUTO_SCHEDULE}
   ${FLATTENER}
   ${OP_FUSION}
-  AutoTuningOptimization.cpp
-  DynamicShapeTilingPrepare.cpp
-  EnhancedFusionDecision.cpp
-  AdaptTritonKernel.cpp
+        AdaptTritonKernel.cpp
   AddFFTSAddr.cpp
   BufferizableOpInterfaceImpl.cpp
   CacheIO.cpp
