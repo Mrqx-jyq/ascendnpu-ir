@@ -181,29 +181,6 @@ def DynamicShapeTilingPrepare : Pass<"hfusion-dynamic-tiling-prepare", "func::Fu
 
 //===----------------------------------------------------------------------===//
 // AutoTuningOptimization: Roofline cost-model driven tile size refinement
-//===----------------------------------------------------------------------===//
-def AutoTuningOptimization : Pass<"hfusion-auto-tuning", "func::FuncOp"> {
-  let summary = "Cost-model driven tiling optimization using Roofline heuristics.";
-  let constructor = "mlir::hfusion::createAutoTuningOptimizationPass()";
-  let dependentDialects = ["hfusion::HFusionDialect", "arith::ArithDialect"];
-}
-
-//===----------------------------------------------------------------------===//
-// EnhancedFusionDecision: data-reuse driven fusion scoring
-//===----------------------------------------------------------------------===//
-def EnhancedFusionDecision : Pass<"hfusion-enhanced-fusion", "func::FuncOp"> {
-  let summary = "Score producer-consumer pairs by data reuse for smarter fusion.";
-  let constructor = "mlir::hfusion::createEnhancedFusionDecisionPass()";
-  let dependentDialects = ["hfusion::HFusionDialect", "func::FuncDialect"];
-}
-
-//===----------------------------------------------------------------------===//
-// DynamicShapeTilingPrepare: runtime-adaptive tiling for dynamic dims
-//===----------------------------------------------------------------------===//
-def DynamicShapeTilingPrepare : Pass<"hfusion-dynamic-tiling-prepare", "func::FuncOp"> {
-  let summary = "Insert runtime tile selection for dynamically-shaped tensors.";
-  let constructor = "mlir::hfusion::createDynamicShapeTilingPreparePass()";
-  let dependentDialects = ["hfusion::HFusionDialect", "arith::ArithDialect"];
 }
 def AddFFTSAddr : Pass<"hfusion-add-ffts-addr", "ModuleOp"> {
   let summary = "Add ffts base address to func param and annotation";
