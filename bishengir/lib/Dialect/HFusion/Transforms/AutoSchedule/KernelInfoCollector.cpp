@@ -300,18 +300,18 @@ LogicalResult KernelInfoCollector::postVisitFuncImpl(func::FuncOp f) {
     else if (isa<linalg::TransposeOp>(op)) ++transposeCnt;
     else if (isa<linalg::LinalgOp>(op)) ++ewCnt;
   });
-  info->numMatmulOps = matmulCnt;
-  info->numReduceOps = reduceCnt;
-  info->numBroadcastOps = brcCnt;
-  info->numTransposeOps = transposeCnt;
-  info->numElementwiseOps = ewCnt;
-  info->numLinalgOps = matmulCnt + reduceCnt + brcCnt + transposeCnt + ewCnt;
+  info_->numMatmulOps = matmulCnt;
+  info_->numReduceOps = reduceCnt;
+  info_->numBroadcastOps = brcCnt;
+  info_->numTransposeOps = transposeCnt;
+  info_->numElementwiseOps = ewCnt;
+  info_->numLinalgOps = matmulCnt + reduceCnt + brcCnt + transposeCnt + ewCnt;
   LDBG("Kernel ops: M=" << matmulCnt << " R=" << reduceCnt
         << " B=" << brcCnt << " T=" << transposeCnt << " E=" << ewCnt);
 
   int64_t opCount = 0;
   f.walk([&](linalg::LinalgOp) { ++opCount; });
-  info->numLinalgOps = opCount;
+  info_->numLinalgOps = opCount;
   LDBG("Kernel contains " << opCount << " linalg ops");
 
   // Per-type operator feature analysis for auto-tuning
@@ -323,10 +323,10 @@ LogicalResult KernelInfoCollector::postVisitFuncImpl(func::FuncOp f) {
     else if (isa<linalg::TransposeOp>(op)) ++transposeCnt;
     else if (isa<linalg::LinalgOp>(op)) ++ewCnt;
   });
-  info->numMatmulOps = matmulCnt; info->numReduceOps = reduceCnt;
-  info->numBroadcastOps = brcCnt; info->numTransposeOps = transposeCnt;
-  info->numElementwiseOps = ewCnt;
-  info->numLinalgOps = matmulCnt+reduceCnt+brcCnt+transposeCnt+ewCnt;
+  info_->numMatmulOps = matmulCnt; info_->numReduceOps = reduceCnt;
+  info_->numBroadcastOps = brcCnt; info_->numTransposeOps = transposeCnt;
+  info_->numElementwiseOps = ewCnt;
+  info_->numLinalgOps = matmulCnt+reduceCnt+brcCnt+transposeCnt+ewCnt;
   LDBG("Kernel ops: M=" << matmulCnt << " R=" << reduceCnt << " B=" << brcCnt << " T=" << transposeCnt << " E=" << ewCnt);
 
   // Mark multi buffer
