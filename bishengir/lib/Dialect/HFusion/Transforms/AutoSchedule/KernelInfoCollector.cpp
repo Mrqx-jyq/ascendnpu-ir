@@ -306,27 +306,6 @@ LogicalResult KernelInfoCollector::postVisitFuncImpl(func::FuncOp f) {
   info_->numTransposeOps = transposeCnt;
   info_->numElementwiseOps = ewCnt;
   info_->numLinalgOps = matmulCnt + reduceCnt + brcCnt + transposeCnt + ewCnt;
-  LDBG("Kernel ops: M=" << matmulCnt << " R=" << reduceCnt
-        << " B=" << brcCnt << " T=" << transposeCnt << " E=" << ewCnt);
-
-  int64_t opCount = 0;
-  f.walk([&](linalg::LinalgOp) { ++opCount; });
-  info_->numLinalgOps = opCount;
-  LDBG("Kernel contains " << opCount << " linalg ops");
-
-  // Per-type operator feature analysis for auto-tuning
-  int64_t matmulCnt = 0, reduceCnt = 0, brcCnt = 0, transposeCnt = 0, ewCnt = 0;
-  f.walk([&](Operation *op) {
-    if (isa<linalg::MatmulOp, linalg::MatmulTransposeAOp, linalg::MatmulTransposeBOp>(op)) ++matmulCnt;
-    else if (isa<linalg::ReduceOp, hfusion::ReduceWithIndexOp>(op)) ++reduceCnt;
-    else if (isa<linalg::BroadcastOp>(op)) ++brcCnt;
-    else if (isa<linalg::TransposeOp>(op)) ++transposeCnt;
-    else if (isa<linalg::LinalgOp>(op)) ++ewCnt;
-  });
-  info_->numMatmulOps = matmulCnt; info_->numReduceOps = reduceCnt;
-  info_->numBroadcastOps = brcCnt; info_->numTransposeOps = transposeCnt;
-  info_->numElementwiseOps = ewCnt;
-  info_->numLinalgOps = matmulCnt+reduceCnt+brcCnt+transposeCnt+ewCnt;
   LDBG("Kernel ops: M=" << matmulCnt << " R=" << reduceCnt << " B=" << brcCnt << " T=" << transposeCnt << " E=" << ewCnt);
 
   // Mark multi buffer
