@@ -178,10 +178,6 @@ def DynamicShapeTilingPrepare : Pass<"hfusion-dynamic-tiling-prepare", "func::Fu
   ];
 }
 
-
-//===----------------------------------------------------------------------===//
-// AutoTuningOptimization: Roofline cost-model driven tile size refinement
-}
 def AddFFTSAddr : Pass<"hfusion-add-ffts-addr", "ModuleOp"> {
   let summary = "Add ffts base address to func param and annotation";
   let constructor = "mlir::hfusion::createAddFFTSAddrPass()";
