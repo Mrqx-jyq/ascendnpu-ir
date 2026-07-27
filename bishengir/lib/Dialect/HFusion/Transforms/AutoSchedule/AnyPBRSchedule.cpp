@@ -401,7 +401,13 @@ TilingComputeFn AnyPBRScheduler::calculateTilingImpl() {
         static_cast<int64_t>(anyPBRInfo->getAnalyzer()->getAnchorRank());
     assert(numTilingCases > 0 &&
            "The number of tileable axes should be greater than 0");
-    auto maxBufferCnt = kernelInfo->maxBufferCnt;
+    // Feature-driven tuning: kernels with reduce ops need more buffer space
+    // for partial reduction results. Scale maxBufferCnt by reduce ratio.
+    int64_t maxBufferCnt = kernelInfo->maxBufferCnt;
+    if (kernelInfo->numReduceOps > 0) {
+      int64_t reduceBonus = std::min(kernelInfo->numReduceOps, (int64_t)4);
+      maxBufferCnt = std::max(maxBufferCnt, maxBufferCnt + reduceBonus);
+    }
     assert(maxBufferCnt > 0 && "buffer count should be greater than zero!");
 
     // Calculate tiling data.
