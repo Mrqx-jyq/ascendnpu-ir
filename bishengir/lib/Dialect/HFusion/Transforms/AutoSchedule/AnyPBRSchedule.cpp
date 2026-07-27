@@ -404,6 +404,11 @@ TilingComputeFn AnyPBRScheduler::calculateTilingImpl() {
     // Feature-driven tuning: kernels with reduce ops need more buffer space
     // for partial reduction results. Scale maxBufferCnt by reduce ratio.
     int64_t maxBufferCnt = kernelInfo->maxBufferCnt;
+    // Feature-driven: kernels with reduce ops need extra buffer space
+    if (kernelInfo->numReduceOps > 0) {
+      int64_t reduceBonus = std::min(kernelInfo->numReduceOps, (int64_t)4);
+      maxBufferCnt = std::max(maxBufferCnt, maxBufferCnt + reduceBonus);
+    }
     if (kernelInfo->numReduceOps > 0) {
       int64_t reduceBonus = std::min(kernelInfo->numReduceOps, (int64_t)4);
       maxBufferCnt = std::max(maxBufferCnt, maxBufferCnt + reduceBonus);

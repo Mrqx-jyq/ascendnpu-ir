@@ -212,6 +212,13 @@ public:
   /// Maximum number of buffers that need to co-exist on local memory at the
   /// same time.
   int64_t maxBufferCnt{0};
+  /// Per-type operator counts for feature-driven auto-tuning.
+  int64_t numMatmulOps{0};
+  int64_t numReduceOps{0};
+  int64_t numBroadcastOps{0};
+  int64_t numTransposeOps{0};
+  int64_t numElementwiseOps{0};
+  int64_t numLinalgOps{0};
   /// Number of linalg ops in the kernel; used for fusion tuning.
   /// Per-type operator counts for feature-driven scheduling.
   int64_t numMatmulOps{0};

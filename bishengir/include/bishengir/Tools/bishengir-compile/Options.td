@@ -372,6 +372,30 @@ def enableHfusionCountBufferDmaOpt : HFusionOptimizationControlOptions<
   "false"
 >;
 
+def EnableAutoTuningOpt : HFusionOptimizationControlOptions<
+  "Enable cost-model driven auto-tuning pass after auto-schedule.",
+  "bool",
+  "false"
+>;
+
+def EnableEnhancedFusion : HFusionOptimizationControlOptions<
+  "Enable enhanced fusion decision with data reuse analysis.",
+  "bool",
+  "false"
+>;
+
+def EnableDynamicTilingPrepare : HFusionOptimizationControlOptions<
+  "Enable dynamic shape tiling prepare pass.",
+  "bool",
+  "false"
+>;
+
+def AutoTuningMaxCandidates : HFusionOptimizationControlOptions<
+  "Maximum number of tiling candidates in auto-tuning.",
+  "int64_t",
+  "16"
+>;
+
 //===----------------------------------------------------------------------===//
 // HIVM Optimization Control Options
 //===----------------------------------------------------------------------===//

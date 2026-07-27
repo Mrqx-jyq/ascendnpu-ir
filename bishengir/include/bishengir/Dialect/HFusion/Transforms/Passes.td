@@ -89,6 +89,92 @@ def AutoSchedule : Pass<"hfusion-auto-schedule", "ModuleOp"> {
   ];
 }
 
+//===----------------------------------------------------------------------===//
+// Auto-tuning optimization pass: uses cost-model driven search
+// to refine tiling parameters for maximum performance.
+//===----------------------------------------------------------------------===//
+def AutoTuningOptimization : Pass<"hfusion-auto-tuning", "func::FuncOp"> {
+  let summary = "Optimize tiling parameters using cost-model driven auto-tuning.";
+  let description = [{
+    This pass refines tiling parameters for fused kernels using a
+    cost-model driven search. It evaluates multiple tiling configurations
+    and selects the best one based on estimated arithmetic intensity,
+    memory traffic, and buffer pressure.
+
+    Works after AutoSchedule has determined base tiling parameters.
+  }];
+  let constructor = "mlir::hfusion::createAutoTuningOptimizationPass()";
+  let dependentDialects = ["hfusion::HFusionDialect", "hacc::HACCDialect",
+                           "arith::ArithDialect"];
+  let options = [
+    Option<"enableCostModel", "enable-cost-model", "bool",
+           /*default=*/"true",
+           "Enable cost-model driven optimization.">,
+    Option<"maxCandidates", "max-candidates", "int64_t",
+           /*default=*/"16",
+           "Maximum number of tiling candidates to evaluate.">,
+    Option<"enableSearchPruning", "enable-search-pruning", "bool",
+           /*default=*/"true",
+           "Enable pruning of dominated tiling candidates.">,
+  ];
+}
+
+//===----------------------------------------------------------------------===//
+// Enhanced fusion decision pass: considers data reuse and memory
+// bandwidth to make smarter fusion decisions.
+//===----------------------------------------------------------------------===//
+def EnhancedFusionDecision : Pass<"hfusion-enhanced-fusion", "func::FuncOp"> {
+  let summary = "Enhance fusion decisions with data reuse and bandwidth analysis.";
+  let description = [{
+    Analyzes data reuse patterns and memory bandwidth constraints to
+    make smarter fusion decisions. Considers:
+      - Producer-consumer data reuse distance
+      - Memory bandwidth hierarchy (L1, L0, UB)
+      - Intermediate tensor sizes and buffer pressure
+      - Horizontal fusion opportunities with shared inputs
+  }];
+  let constructor = "mlir::hfusion::createEnhancedFusionDecisionPass()";
+  let dependentDialects = ["hfusion::HFusionDialect",
+                           "linalg::LinalgDialect", "tensor::TensorDialect"];
+  let options = [
+    Option<"enableDataReuseAnalysis", "enable-data-reuse", "bool",
+           /*default=*/"true",
+           "Enable data reuse distance analysis for fusion decisions.">,
+    Option<"maxFusionDepth", "max-fusion-depth", "int64_t",
+           /*default=*/"8",
+           "Maximum fusion depth (number of ops in a fused group).">,
+    Option<"minDataReuseRatio", "min-reuse-ratio", "double",
+           /*default=*/"1.5",
+           "Minimum data reuse ratio to justify fusion.">,
+  ];
+}
+
+//===----------------------------------------------------------------------===//
+// Dynamic shape tiling prepare pass: optimizes tiling for dynamic shapes
+// by generating runtime-adaptive tiling configurations.
+//===----------------------------------------------------------------------===//
+def DynamicShapeTilingPrepare : Pass<"hfusion-dynamic-tiling-prepare", "func::FuncOp"> {
+  let summary = "Prepare tiling for dynamic shapes with runtime-adaptive configurations.";
+  let description = [{
+    Optimizes tiling strategies for dynamically-shaped tensors by:
+      - Generating multiple tiling cases with different tile sizes
+      - Creating runtime tiling key selection logic
+      - Enhancing host tiling functions for dynamic shape computation
+      - Adding fallback strategies for irregular shapes
+  }];
+  let constructor = "mlir::hfusion::createDynamicShapeTilingPreparePass()";
+  let dependentDialects = ["hfusion::HFusionDialect",
+                           "arith::ArithDialect", "func::FuncDialect"];
+  let options = [
+    Option<"enableRuntimeTilingSelection", "enable-runtime-selection", "bool",
+           /*default=*/"true",
+           "Enable runtime tiling key selection for dynamic shapes.">,
+    Option<"defaultTileSize", "default-tile-size", "int64_t",
+           /*default=*/"128",
+           "Default tile size when shape information is unavailable.">,
+  ];
+}
+
 def AddFFTSAddr : Pass<"hfusion-add-ffts-addr", "ModuleOp"> {
   let summary = "Add ffts base address to func param and annotation";
   let constructor = "mlir::hfusion::createAddFFTSAddrPass()";

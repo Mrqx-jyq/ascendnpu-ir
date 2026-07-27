@@ -208,6 +208,18 @@ std::unique_ptr<Pass> createDecomposePass(const DecomposeOptions &options = {});
 /// Create a pass to eliminate duplicate functions.
 std::unique_ptr<Pass> createEliminateDuplicateFuncsPass();
 
+/// Create a pass for auto-tuning optimization of tiling parameters.
+std::unique_ptr<Pass>
+createAutoTuningOptimizationPass(const AutoTuningOptimizationOptions &options = {});
+
+/// Create a pass for enhanced fusion decision.
+std::unique_ptr<Pass>
+createEnhancedFusionDecisionPass(const EnhancedFusionDecisionOptions &options = {});
+
+/// Create a pass for dynamic shape tiling prepare.
+std::unique_ptr<Pass>
+createDynamicShapeTilingPreparePass(const DynamicShapeTilingPrepareOptions &options = {});
+
 //===----------------------------------------------------------------------===//
 // Registration
 //===----------------------------------------------------------------------===//
