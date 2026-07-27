@@ -229,15 +229,6 @@ createEnhancedFusionDecisionPass(const EnhancedFusionDecisionOptions &options = 
 std::unique_ptr<Pass>
 createDynamicShapeTilingPreparePass(const DynamicShapeTilingPrepareOptions &options = {});
 
-/// Create a pass for auto-tuning optimization of tiling parameters.
-
-/// Create a pass for enhanced fusion decision.
-std::unique_ptr<Pass>
-
-/// Create a pass for dynamic shape tiling prepare.
-std::unique_ptr<Pass>
-
-//===----------------------------------------------------------------------===//
 // Registration
 //===----------------------------------------------------------------------===//
 
