@@ -312,7 +312,7 @@ def EnableTuningMode : GeneralOptimizationControlOptions<
 def BlockDim : GeneralOptimizationControlOptions<
   "Number of blocks to use",
   "unsigned",
-  "1"
+  "20"
 > {
   let passGroup = ["HFUSION"];
 }
