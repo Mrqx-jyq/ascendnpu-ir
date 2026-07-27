@@ -45,14 +45,10 @@ namespace {
 static constexpr int64_t kL0CSizeInBytes = 128 * 1024;
 static constexpr int64_t kL1SizeInBytes = 512 * 1024;
 
-/// Tiling Keys for different matrix shape categories.
-/// Key 300: General purpose (balanced, M~128, N~256, K~256)
-/// Key 301: Small M shapes (batch <= 128)
-/// Key 302: Large matrices (M,N >= 256)
-/// Key 303: Small N shapes (N <= 128)
-/// Key 304: Tiny shapes (M,N < 64)
+/// Tiling Key
 static constexpr int64_t kTilingCaseKeysAttched[] = {
-    300, 301, 302, 303, 304,
+    /* Key 300: general purpose */ 300,
+    /* Key 301: small M */ 301,
 };
 
 struct BlockShapeTilingData {
@@ -93,19 +89,12 @@ struct SingleCubeTilingConfig {
   EpilogueTilingData epilogue;
 };
 
-/// Tiling Struct Default configs. BlockK increased for Keys 301/303/304 for better L1 utilization.
-/// Format: BlockShape{M,N,K}, ProcessShape{M,N,K}, SplitK, Swizzle{dir,off}, ShuffleKType, EpilogueTile
+/// Tiling Struct Default configs
 static constexpr SingleCubeTilingConfig kSingleCubeDefaultTilingInfo[] = {
     /* Key 300: general purpose */
     {{128, 256, 256}, {128, 256, 64}, {1}, {0, 3}, {0}, {4}},
-    /* Key 301: small M */
-    {{64, 256, 512}, {64, 256, 64}, {1}, {0, 3}, {0}, {4}},
-    /* Key 302: large square */
-    {{256, 256, 256}, {256, 256, 64}, {1}, {0, 3}, {0}, {4}},
-    /* Key 303: small N */
-    {{128, 128, 512}, {128, 128, 64}, {1}, {0, 3}, {0}, {4}},
-    /* Key 304: tiny */
-    {{32, 64, 256}, {32, 64, 64}, {1}, {0, 3}, {0}, {4}},
+    /* Key 301: small M (M <= 64) */
+    {{64, 256, 256}, {64, 256, 64}, {1}, {0, 3}, {0}, {4}},
 };
 } // namespace
 
@@ -153,29 +142,10 @@ TilingComputeFn SingleCubeScheduler::calculateTilingImpl() {
       Expr c1 = opBuilder->createConstExpr(1);
       Expr c128 = opBuilder->createConstExpr(128);
       Expr c256 = opBuilder->createConstExpr(256);
-      // Shape-adaptive tiling key selection: choose best config based on M,N dims
-      Expr c64 = opBuilder->createConstExpr(64);
-      Expr c128_s = opBuilder->createConstExpr(128);
-      Expr c256_s = opBuilder->createConstExpr(256);
-      Expr c512_s = opBuilder->createConstExpr(512);
+      Expr c64_k = opBuilder->createConstExpr(64);
       Expr key300_v = opBuilder->createConstExpr(300LL);
       Expr key301_v = opBuilder->createConstExpr(301LL);
-      Expr key302_v = opBuilder->createConstExpr(302LL);
-      Expr key303_v = opBuilder->createConstExpr(303LL);
-      Expr key304_v = opBuilder->createConstExpr(304LL);
-
-      // Heuristic chain (evaluated at runtime via dynamic tiling):
-      //   tiny(M<64 & N<64) -> 304, smallM(M<=128) -> 301, smallN(N<=128) -> 303,
-      //   large(M>=512 & N>=512) -> 302, default -> 300
-      Expr isTiny = select(lengthM < c64, lengthN < c64, c0);
-      Expr isSmallM = lengthM <= c128_s;
-      Expr isSmallN = lengthN <= c128_s;
-      Expr isLarge = select(lengthM >= c512_s, lengthN >= c512_s, c0);
-
-      Expr tilingKeyExpr = select(isTiny, key304_v,
-                            select(isSmallM, key301_v,
-                            select(isSmallN, key303_v,
-                            select(isLarge, key302_v, key300_v))));
+      Expr tilingKeyExpr = select(lengthM <= c64_k, key301_v, key300_v);
       Expr blockTileM = opBuilder->createConstExpr(tilingConfig.block.m);
       Expr blockTileN = opBuilder->createConstExpr(tilingConfig.block.n);
       if (!matmulOpInfo.transposeA && matmulOpInfo.transposeB) {
@@ -187,7 +157,6 @@ TilingComputeFn SingleCubeScheduler::calculateTilingImpl() {
                                 c128 * (c1 - (lengthN <= lengthM)));
       }
       Expr blockTileK = opBuilder->createConstExpr(tilingConfig.block.k);
-
       if (tuningInfo.size() >= 3 && tuningInfo[0] != -1) {
         blockTileM = opBuilder->createConstExpr(tuningInfo[0]);
         blockTileN = opBuilder->createConstExpr(tuningInfo[1]);
@@ -203,35 +172,18 @@ TilingComputeFn SingleCubeScheduler::calculateTilingImpl() {
           kernelInfo->originalKernel->emitError(
               "(BlockM * BlockN + BlockK * BlockN) * 2 <= 512K(L1 Cache Size)");
         }
-      } else {
-        // K-dominant auto-tuning heuristic: when K dimension is much larger
-        // than both M and N (K > 4 * max(M, N)), increase BlockK for throughput.
-        Expr c4h = opBuilder->createConstExpr(4);
-        Expr c384 = opBuilder->createConstExpr(384);
-        Expr cMaxMN = select(lengthM > lengthN, lengthM, lengthN);
-        blockTileK = select(lengthK > (c4h * cMaxMN), c384, blockTileK);
       }
       Expr processTileM = opBuilder->createConstExpr(tilingConfig.process.m);
       Expr processTileN = opBuilder->createConstExpr(tilingConfig.process.n);
       Expr processTileK = opBuilder->createConstExpr(tilingConfig.process.k);
-      Expr splitKSlices =
-          opBuilder->createConstExpr(tilingConfig.splitKSlices.k);
+      Expr c1024 = opBuilder->createConstExpr(1024);
+      Expr c2sp = opBuilder->createConstExpr(2);
+      Expr splitKSlices = select(lengthK >= c1024, c2sp, c1);
       Expr shuffleKType =
           opBuilder->createConstExpr(tilingConfig.shuffleKType.type);
-      // Adaptive swizzle: direction and offset based on matrix shape ratio.
-      // M >> N (tall): offset=2, direction=0 (M-major swizzle)
-      // N >> M (wide): offset=3, direction=1 (N-major swizzle)
-      // Balanced:     offset=3, direction = N <= M
-      Expr c2_sw = opBuilder->createConstExpr(2);
-      Expr c3_sw = opBuilder->createConstExpr(3);
-      Expr c4_sw = opBuilder->createConstExpr(4);
-      Expr isTall = lengthM > (c4_sw * lengthN);
-      Expr isWide = lengthN > (c4_sw * lengthM);
-      Expr swizzleOffset = select(isTall, c2_sw,
-                            select(isWide, c3_sw, c3_sw));
-      Expr swizzleDirection = select(isTall, c0,
-                               select(isWide, c1,
-                               select(lengthN <= lengthM, c0, c1)));
+      Expr swizzleOffset =
+          opBuilder->createConstExpr(tilingConfig.swizzle.offset);
+      Expr swizzleDirection = select(lengthN <= lengthM, c0, c1);
       if (tuningInfo.size() >= 5 && tuningInfo[3] != -1) {
         swizzleDirection = opBuilder->createConstExpr(tuningInfo[3]);
         swizzleOffset = opBuilder->createConstExpr(tuningInfo[4]);

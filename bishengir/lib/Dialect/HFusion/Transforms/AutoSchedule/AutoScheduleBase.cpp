@@ -1229,14 +1229,14 @@ void AutoSchedulePass::setOptionsForFunc(AutoScheduleOptions &options,
   options.enableSymbolAnalysis = this->enableSymbolAnalysis;
 
   auto maybeFusionKind = hfusion::tryGetFusionKind(func);
-  // For cube and mix fusion kind, use reduced block dim (3/4 of full)
-  // because cube operations have their own internal parallelism.
+  // For cube and mix fusion kind, the block dim is set to half because cube
+  // and vector is 1:2 for now.
   if (maybeFusionKind.has_value() &&
       ((*maybeFusionKind) == FusionKind::MixCV ||
        (*maybeFusionKind) == FusionKind::SingleCube ||
        (*maybeFusionKind) == FusionKind::MixC2 ||
        (*maybeFusionKind) == FusionKind::ShallowCV)) {
-    options.blockDim = std::max((unsigned int)(this->blockDim * 3 / 4), (unsigned int)1);
+    options.blockDim = std::max(this->blockDim / 2, (unsigned int)1);
   } else {
     options.blockDim = this->blockDim;
   }

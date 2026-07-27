@@ -212,6 +212,8 @@ public:
   /// Maximum number of buffers that need to co-exist on local memory at the
   /// same time.
   int64_t maxBufferCnt{0};
+  /// Number of linalg ops in the kernel; used for fusion tuning.
+  int64_t numLinalgOps{0};
   /// Block dimension.
   uint32_t blockDim{0};
   /// Cube tiling tuning parameters for SingleCube Schedule.

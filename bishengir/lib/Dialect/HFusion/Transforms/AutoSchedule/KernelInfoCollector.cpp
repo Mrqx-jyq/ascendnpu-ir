@@ -290,6 +290,12 @@ LogicalResult KernelInfoCollector::visitFuncImpl(func::FuncOp f) {
 }
 
 LogicalResult KernelInfoCollector::postVisitFuncImpl(func::FuncOp f) {
+  // Count total linalg ops for fusion tuning
+  int64_t opCount = 0;
+  f.walk([&](linalg::LinalgOp) { ++opCount; });
+  info->numLinalgOps = opCount;
+  LDBG("Kernel contains " << opCount << " linalg ops");
+
   // Mark multi buffer
   auto kernelInputs = getMaybeReshapedInputs(f.getArguments());
   utils::BufferAnalysisOptions options;
